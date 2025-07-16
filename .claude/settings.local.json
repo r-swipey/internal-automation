@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"C:\\Users\\kalya\\Documents\\internal-automation\\venv\\Scripts\\python.exe\" app.py)"
+    ],
+    "deny": []
+  }
+}
