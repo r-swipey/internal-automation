@@ -740,7 +740,7 @@ def health():
         "services": {
             "s3": "configured" if s3_client else "not configured",
             "database": "configured" if supabase else "not configured",
-            "sendgrid": "configured" if sendgrid_client else "not configured"
+            "sendgrid": "configured" if sg else "not configured"
         }
     })
 
