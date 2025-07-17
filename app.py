@@ -2,7 +2,7 @@
 # Test passed with payload: K mohan 1829, VKK mohan 1829, kalyanamo@gmail.com, +6012365086
 # Customer record ID: 3f3fe1d3-e0ea-42e4-a60d-5a044274630d
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, render_template
 import os
 from dotenv import load_dotenv
 import boto3
@@ -156,64 +156,25 @@ def update_company_kyb_status(clickup_task_id, status):
 
 # SendGrid email functions
 def send_upload_email(customer_email, customer_name, upload_link):
-    """Send upload link email to customer via SendGrid"""
+    """Send upload link email to customer via SendGrid dynamic template"""
     try:
         if not sg:
             return {'success': False, 'error': 'SendGrid not configured'}
         
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
-                .container {{ max-width: 600px; margin: 0 auto; }}
-                .header {{ background-color: #007bff; color: white; padding: 20px; text-align: center; }}
-                .content {{ padding: 20px; background-color: #f8f9fa; }}
-                .btn {{ background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-                .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>KYB Document Upload Required</h1>
-                </div>
-                <div class="content">
-                    <p>Dear {customer_name},</p>
-                    <p>Thank you for submitting your KYB application. To complete your onboarding process, please upload your required documents using the secure link below:</p>
-                    <p style="text-align: center;">
-                        <a href="{upload_link}" class="btn">Upload Documents</a>
-                    </p>
-                    <p><strong>What you need to upload:</strong></p>
-                    <ul>
-                        <li>Completed KYB form</li>
-                        <li>Company registration documents</li>
-                        <li>Director identification documents</li>
-                    </ul>
-                    <p><strong>Important:</strong></p>
-                    <ul>
-                        <li>Only PDF files are accepted</li>
-                        <li>Maximum file size: 10MB</li>
-                        <li>This link is secure and unique to your application</li>
-                    </ul>
-                    <p>If you have any questions, please contact our support team.</p>
-                    <p>Best regards,<br>Swipey KYB Team</p>
-                </div>
-                <div class="footer">
-                    <p>This is an automated message. Please do not reply to this email.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
+        # Use dynamic template with template data
         message = Mail(
             from_email=os.getenv('FROM_EMAIL'),
-            to_emails=customer_email,
-            subject='KYB Document Upload Required - Swipey',
-            html_content=html_content
+            to_emails=customer_email
         )
+        
+        # Set the dynamic template ID
+        message.template_id = 'd-6d0f3e46d206423a9b52508631eceeb7'
+        
+        # Set dynamic template data
+        message.dynamic_template_data = {
+            'customer_name': customer_name,
+            'upload_link': upload_link
+        }
         
         response = sg.send(message)
         
@@ -2143,279 +2104,9 @@ def upload_page_async(token):
     try:
         customer_data = decode_customer_token(token)
         
-        html_template = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Your KYB Document (ASYNC OCR - Like Console)</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 600px;
-            margin: 50px auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .upload-area {
-            border: 2px dashed #ccc;
-            border-radius: 10px;
-            padding: 40px;
-            text-align: center;
-            margin: 20px 0;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        .upload-area:hover {
-            border-color: #007bff;
-            background-color: #f8f9fa;
-        }
-        .btn {
-            background-color: #28a745;
-            color: white;
-            padding: 12px 30px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            margin: 10px 0;
-        }
-        .btn:hover {
-            background-color: #218838;
-        }
-        .btn:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        .message {
-            padding: 15px;
-            margin: 15px 0;
-            border-radius: 5px;
-            display: none;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .processing {
-            background-color: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
-        }
-        .file-info {
-            background-color: #e9ecef;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-            display: none;
-        }
-        .extraction-preview {
-            background-color: #e8f5e8;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 15px 0;
-            border-left: 4px solid #28a745;
-            display: none;
-        }
-        .async-info {
-            background-color: #e3f2fd;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-            border-left: 4px solid #2196f3;
-            font-size: 14px;
-        }
-        .extraction-item {
-            margin: 5px 0;
-            padding: 5px;
-            background-color: #f8f9fa;
-            border-radius: 3px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Upload Your KYB Document</h1>
-        <div class="async-info">
-            <strong>ASYNC Processing (Like AWS Console)</strong><br>
-            <small>Uses the same asynchronous workflow as AWS Textract Console. Expect 10-15 second processing time.</small>
-        </div>
-        <p>Hello <strong>{{ customer_email }}</strong>,</p>
-        <p>Please upload your completed KYB form. Our system uses asynchronous OCR processing, just like the AWS console.</p>
-        
-        <div class="upload-area" id="uploadArea">
-            <div>
-                <h3>Drop your PDF file here</h3>
-                <p>or</p>
-                <button type="button" class="btn" onclick="document.getElementById('fileInput').click()">
-                    Choose File
-                </button>
-                <input type="file" id="fileInput" accept=".pdf" style="display: none;">
-                <p><small>Maximum file size: 10MB | PDF files only | Async processing like console</small></p>
-            </div>
-        </div>
-
-        <div class="file-info" id="fileInfo"></div>
-
-        <button type="button" class="btn" id="uploadBtn" onclick="uploadFile()" disabled>
-            Upload with ASYNC OCR
-        </button>
-
-        <div class="message" id="message"></div>
-        <div class="extraction-preview" id="extractionPreview"></div>
-    </div>
-
-    <script>
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const fileInfo = document.getElementById('fileInfo');
-        const message = document.getElementById('message');
-        const extractionPreview = document.getElementById('extractionPreview');
-
-        let selectedFile = null;
-        const customerToken = '{{ token }}';
-
-        // File handlers
-        fileInput.addEventListener('change', handleFileSelect);
-
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
-            }
-        });
-
-        function handleFileSelect(e) {
-            handleFile(e.target.files[0]);
-        }
-
-        function handleFile(file) {
-            if (!file) return;
-
-            if (file.type !== 'application/pdf') {
-                showMessage('Please select a PDF file only.', 'error');
-                return;
-            }
-
-            if (file.size > 10 * 1024 * 1024) {
-                showMessage('File size must be less than 10MB.', 'error');
-                return;
-            }
-
-            selectedFile = file;
-            fileInfo.innerHTML = `
-                <strong>Selected file:</strong> ${file.name}<br>
-                <strong>Size:</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB
-            `;
-            fileInfo.style.display = 'block';
-            uploadBtn.disabled = false;
-            message.style.display = 'none';
-            extractionPreview.style.display = 'none';
-        }
-
-        async function uploadFile() {
-            if (!selectedFile || !customerToken) {
-                showMessage('No file selected or invalid upload link.', 'error');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('document', selectedFile);
-
-            uploadBtn.disabled = true;
-            uploadBtn.textContent = 'Processing (10-15 seconds)...';
-            showMessage('Processing with ASYNC OCR (like console). This may take 10-15 seconds...', 'processing');
-            
-            try {
-                // Use the ASYNC endpoint
-                const response = await fetch(`/upload-file-async/${customerToken}`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const result = await response.json();
-
-                if (response.ok) {
-                    showMessage('Document processed successfully with ASYNC OCR!', 'success');
-                    
-                    // Show extraction preview
-                    if (result.extracted_preview) {
-                        showExtractionPreview(result.extracted_preview);
-                    }
-                    
-                    // Reset form
-                    selectedFile = null;
-                    fileInput.value = '';
-                    fileInfo.style.display = 'none';
-                    uploadBtn.disabled = true;
-                    uploadBtn.textContent = 'Upload with ASYNC OCR';
-                } else {
-                    throw new Error(result.error || 'Upload failed');
-                }
-            } catch (error) {
-                showMessage(`Upload failed: ${error.message}`, 'error');
-                uploadBtn.disabled = false;
-                uploadBtn.textContent = 'Upload with ASYNC OCR';
-            }
-        }
-
-        function showMessage(text, type) {
-            message.innerHTML = text;
-            message.className = `message ${type}`;
-            message.style.display = 'block';
-        }
-
-        function showExtractionPreview(data) {
-            let html = '<h4>ASYNC Extracted Information:</h4>';
-            
-            if (data.company_name) {
-                html += `<div class="extraction-item"><strong>Company:</strong> ${data.company_name}</div>`;
-            }
-            if (data.director_name) {
-                html += `<div class="extraction-item"><strong>Director:</strong> ${data.director_name}</div>`;
-            }
-            if (data.member_name) {
-                html += `<div class="extraction-item"><strong>Member:</strong> ${data.member_name}</div>`;
-            }
-            if (data.email) {
-                html += `<div class="extraction-item"><strong>Email:</strong> ${data.email}</div>`;
-            }
-            if (data.incorporation_date) {
-                html += `<div class="extraction-item"><strong>Incorporation Date:</strong> ${data.incorporation_date}</div>`;
-            }
-            
-            extractionPreview.innerHTML = html;
-            extractionPreview.style.display = 'block';
-        }
-    </script>
-</body>
-</html>
-        '''
-        
-        return render_template_string(html_template, 
-                                    customer_email=customer_data['email'], 
-                                    token=token)
+        return render_template('upload_async.html', 
+                             customer_email=customer_data['email'], 
+                             token=token)
     except Exception as e:
         return jsonify({'error': 'Invalid upload link'}), 400
 
@@ -2546,6 +2237,62 @@ def upload_file_async_with_emails(token):
     except Exception as e:
         print(f"Upload error: {e}")
         return jsonify({'error': 'Upload failed', 'details': str(e)}), 500
+
+# TEST ENDPOINT: Send test email using Supabase company data
+@app.route('/test-email-from-supabase/<uuid>')
+def test_email_from_supabase(uuid):
+    """Test endpoint to send email using company data from Supabase by UUID"""
+    try:
+        if not supabase:
+            # Mock company data for testing when Supabase is not configured
+            if uuid == '623c46e0-b5ea-46b7-949f-590fa810f7a0':
+                company_data = {
+                    'id': uuid,
+                    'email': 'kalyanamo@gmail.com',
+                    'company_name': 'Test Company Ltd',
+                    'clickup_task_id': 'test-task-123',
+                    'kyb_status': 'pending_documents',
+                    'phone': '+1234567890',
+                    'typeform_submission_id': 'test-typeform-123'
+                }
+            else:
+                return jsonify({'error': f'Company with UUID {uuid} not found (Supabase not configured)'}), 404
+        else:
+            # Fetch company data from Supabase
+            response = supabase.table('companies').select('*').eq('id', uuid).execute()
+            
+            if not response.data:
+                return jsonify({'error': f'Company with UUID {uuid} not found'}), 404
+            
+            company_data = response.data[0]
+        
+        # Extract required fields for email
+        customer_email = company_data.get('email')
+        customer_name = company_data.get('company_name', 'Valued Customer')
+        task_id = company_data.get('clickup_task_id', 'test-task')
+        
+        if not customer_email:
+            return jsonify({'error': 'Company record missing email address'}), 400
+        
+        # Generate test upload link (using async route)
+        token = generate_customer_token(task_id, customer_email)
+        upload_link = f"{request.host_url}upload-async/{token}"
+        
+        # Send email using dynamic template
+        email_result = send_upload_email(customer_email, customer_name, upload_link)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Test email sent to {customer_email}',
+            'company_data': company_data,
+            'upload_link': upload_link,
+            'email_result': email_result,
+            'note': 'Using mock data' if not supabase else 'Using Supabase data'
+        })
+        
+    except Exception as e:
+        print(f"Test email error: {e}")
+        return jsonify({'error': 'Test email failed', 'details': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

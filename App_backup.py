@@ -56,7 +56,7 @@ except Exception as e:
 # Supabase Configuration
 try:
     supabase_url = os.getenv('SUPABASE_URL')
-    supabase_key = os.getenv('SUPABASE_KEY')
+    supabase_key = os.getenv('SUPABASE_ANON_KEY')
     if supabase_url and supabase_key and 'your_' not in supabase_url:
         supabase = create_client(supabase_url, supabase_key)
         print("Supabase client created successfully!")

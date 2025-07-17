@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload your Section 14 SSM doc</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Quicksand', sans-serif;
+            line-height: 1.6;
+            color: #002940;
+            background: linear-gradient(135deg, #fcf7f3 0%, #ecfffb 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: #FFFFFF;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 41, 64, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #27d8b2 0%, #8ce4d1 100%);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo {
+            width: 120px;
+            height: auto;
+            margin-bottom: 20px;
+            filter: drop-shadow(0 2px 8px rgba(39, 216, 178, 0.2));
+        }
+        
+        .logo-placeholder {
+            width: 120px;
+            height: 40px;
+            background: linear-gradient(135deg, #27d8b2 0%, #8ce4d1 100%);
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: #FFFFFF;
+            font-size: 16px;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+            text-shadow: 0 2px 4px rgba(0, 41, 64, 0.2);
+        }
+        
+        h1 {
+            color: #002940;
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .info-box {
+            background: linear-gradient(135deg, #ecfffb 0%, #b4e9de 20%);
+            border-left: 4px solid #27d8b2;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+        }
+        
+        .info-box strong {
+            color: #002940;
+            font-weight: 600;
+        }
+        
+        .info-box small {
+            color: #305063;
+            font-size: 14px;
+        }
+        
+        .greeting {
+            font-size: 18px;
+            color: #002940;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        
+        .description {
+            color: #305063;
+            margin-bottom: 30px;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        
+        .upload-area {
+            border: 2px dashed #8ce4d1;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
+            margin: 30px 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #FFFFFF;
+        }
+        
+        .upload-area:hover {
+            border-color: #27d8b2;
+            background-color: #fcf7f3;
+        }
+        
+        .upload-area.dragover {
+            border-color: #27d8b2;
+            background-color: #ecfffb;
+        }
+        
+        .upload-area h3 {
+            color: #002940;
+            font-size: 18px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+        
+        .upload-area p {
+            color: #305063;
+            margin: 15px 0;
+            font-size: 16px;
+        }
+        
+        .upload-area small {
+            color: #778c98;
+            font-size: 13px;
+            margin-top: 15px;
+            display: block;
+        }
+        
+        .choose-file-btn {
+            background: #27d8b2;
+            color: #FFFFFF;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            font-family: 'Quicksand', sans-serif;
+            transition: all 0.3s ease;
+        }
+        
+        .choose-file-btn:hover {
+            background: #1fc4a0;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #27d8b2 0%, #8ce4d1 100%);
+            color: #FFFFFF;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: 'Quicksand', sans-serif;
+            margin: 10px 0;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(39, 216, 178, 0.3);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(39, 216, 178, 0.4);
+        }
+        
+        .btn:disabled {
+            background: linear-gradient(135deg, #778c98 0%, #b4b4b4 100%);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .message {
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            display: none;
+            font-weight: 500;
+        }
+        
+        .success {
+            background: linear-gradient(135deg, #ecfffb 0%, #b4e9de 100%);
+            color: #002940;
+            border: 1px solid #27d8b2;
+            border-left: 4px solid #27d8b2;
+        }
+        
+        .error {
+            background: linear-gradient(135deg, #ffe8e8 0%, #ffcccb 100%);
+            color: #8b0000;
+            border: 1px solid #ff6b6b;
+            border-left: 4px solid #ff6b6b;
+        }
+        
+        .processing {
+            background: linear-gradient(135deg, #f9efb6 0%, #fff3cd 100%);
+            color: #305063;
+            border: 1px solid #f9efb6;
+            border-left: 4px solid #27d8b2;
+        }
+        
+        .file-info {
+            background: linear-gradient(135deg, #ecfffb 0%, rgba(180, 233, 222, 0.3) 100%);
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #27d8b2;
+            display: none;
+            color: #002940;
+        }
+        
+        .extraction-preview {
+            background: linear-gradient(135deg, #ecfffb 0%, #b4e9de 100%);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            border-left: 4px solid #27d8b2;
+            display: none;
+        }
+        
+        .extraction-preview h4 {
+            color: #002940;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        
+        .extraction-item {
+            margin: 8px 0;
+            padding: 12px 15px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 6px;
+            border-left: 3px solid #27d8b2;
+            color: #002940;
+        }
+        
+        .extraction-item strong {
+            color: #002940;
+            font-weight: 600;
+        }
+        
+        /* Mobile Responsive */
+        @media (max-width: 600px) {
+            .container {
+                margin: 10px;
+                padding: 25px 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .upload-area {
+                padding: 30px 20px;
+            }
+            
+            .btn {
+                width: 100%;
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <img class="logoImg" src="http://cdn.mcauto-images-production.sendgrid.net/a45ca1152023e5ca/96a74b65-4c90-4b68-a001-5ea2890483c4/134x48.png" alt="Swipey Logo" width="133" height="48" style="margin:0 auto 20px auto; border:0; padding:0; max-width:133px; display:block; height:auto; filter: drop-shadow(0 2px 8px rgba(39, 216, 178, 0.2));">
+            <h1>Upload your Section 14 SSM doc</h1>
+        </div>
+        
+        <div class="info-box">
+            <strong>Wait on page after uploading for next steps</strong>
+        </div>
+        
+        <div class="greeting">Hello <strong>{{ customer_name }}</strong>! 👋</div>
+        <div class="description">
+            Let's verify your company. We need your SSM document section 14.
+        </div>
+        
+        <div class="upload-area" id="uploadArea">
+            <div>
+                <h3>Drop your PDF file here</h3>
+                <p>or</p>
+                <button type="button" class="choose-file-btn" onclick="document.getElementById('fileInput').click()">
+                    Choose File
+                </button>
+                <input type="file" id="fileInput" accept=".pdf" style="display: none;">
+                <small>Maximum file size: 10MB | PDF files only</small>
+            </div>
+        </div>
+
+        <div class="file-info" id="fileInfo"></div>
+
+        <button type="button" class="btn" id="uploadBtn" onclick="uploadFile()" disabled>
+            🚀 Launch Docs
+        </button>
+
+        <div class="message" id="message"></div>
+        <div class="extraction-preview" id="extractionPreview"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInfo = document.getElementById('fileInfo');
+        const message = document.getElementById('message');
+        const extractionPreview = document.getElementById('extractionPreview');
+
+        let selectedFile = null;
+        const customerToken = '{{ token }}';
+
+        // File handlers
+        fileInput.addEventListener('change', handleFileSelect);
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(e) {
+            handleFile(e.target.files[0]);
+        }
+
+        function handleFile(file) {
+            if (!file) return;
+
+            if (file.type !== 'application/pdf') {
+                showMessage('Please select a PDF file only.', 'error');
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                showMessage('File size must be less than 10MB.', 'error');
+                return;
+            }
+
+            selectedFile = file;
+            fileInfo.innerHTML = `
+                <strong>✅ File ready:</strong> ${file.name}<br>
+                <strong>📊 Size:</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB
+            `;
+            fileInfo.style.display = 'block';
+            uploadBtn.disabled = false;
+            message.style.display = 'none';
+            extractionPreview.style.display = 'none';
+        }
+
+        async function uploadFile() {
+            if (!selectedFile || !customerToken) {
+                showMessage('No file selected or invalid upload link.', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('document', selectedFile);
+
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '🔄 Processing...';
+            showMessage('🚀 Processing your document. Please wait on this page for next steps...', 'processing');
+            
+            try {
+                // Use the ASYNC endpoint
+                const response = await fetch(`/upload-file-async/${customerToken}`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage('✅ Document processed successfully! Data Extracted!.', 'success');
+                    
+                    // Show extraction preview
+                    if (result.extracted_preview) {
+                        showExtractionPreview(result.extracted_preview);
+                    }
+                    
+                    // Reset form
+                    selectedFile = null;
+                    fileInput.value = '';
+                    fileInfo.style.display = 'none';
+                    uploadBtn.disabled = true;
+                    uploadBtn.textContent = '🚀 Upload Docs';
+                } else {
+                    throw new Error(result.error || 'Upload failed');
+                }
+            } catch (error) {
+                showMessage(`❌ Upload failed: ${error.message}`, 'error');
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = '🚀 Launch Docs';
+            }
+        }
+
+        function showMessage(text, type) {
+            message.innerHTML = text;
+            message.className = `message ${type}`;
+            message.style.display = 'block';
+        }
+
+        function showExtractionPreview(data) {
+            let html = '<h4>📋 Extracted Information:</h4>';
+            
+            if (data.company_name) {
+                html += `<div class="extraction-item"><strong>🏢 Company:</strong> ${data.company_name}</div>`;
+            }
+            if (data.director_name) {
+                html += `<div class="extraction-item"><strong>👤 Director:</strong> ${data.director_name}</div>`;
+            }
+            if (data.member_name) {
+                html += `<div class="extraction-item"><strong>👥 Member:</strong> ${data.member_name}</div>`;
+            }
+            if (data.email) {
+                html += `<div class="extraction-item"><strong>📧 Email:</strong> ${data.email}</div>`;
+            }
+            if (data.incorporation_date) {
+                html += `<div class="extraction-item"><strong>📅 Incorporation Date:</strong> ${data.incorporation_date}</div>`;
+            }
+            
+            extractionPreview.innerHTML = html;
+            extractionPreview.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
