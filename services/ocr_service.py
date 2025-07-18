@@ -358,52 +358,8 @@ class OCRService:
         
         # If business address is still not found or looks incomplete, search for address patterns
         if not company_info['business_address'] or 'NIL' in company_info['business_address'] or company_info['business_address'] == 'Office No':
-            # Look for address patterns, prioritizing business address over registered address
-            business_address_found = False
-            
-            # First, look for addresses that appear before "Business Address" label
-            for i, line in enumerate(lines):
-                if 'Business Address' in line and i > 0:
-                    # Check the line before "Business Address" label
-                    prev_line = lines[i - 1].strip()
-                    if (re.search(r'\d+-\d+,\s*JALAN', prev_line) or 
-                        'CITY CENTRE' in prev_line):
-                        # Found business address pattern
-                        address_parts = [prev_line]
-                        # Check next few lines for continuation
-                        for j in range(i + 1, min(i + 4, len(lines))):
-                            next_addr = lines[j].strip()
-                            if ('KUALA LUMPUR' in next_addr or 'MALAYSIA' in next_addr) and 'Office No' not in next_addr:
-                                address_parts.append(next_addr)
-                            elif 'Office No' in next_addr or 'Fax' in next_addr:
-                                break
-                        company_info['business_address'] = ' '.join(address_parts)
-                        business_address_found = True
-                        break
-            
-            # If still not found, look for registered address patterns
-            if not business_address_found:
-                for i, line in enumerate(lines):
-                    line = line.strip()
-                    if ('LOT W17A2' in line or 'WISMA GOLDEN EAGLE' in line or 
-                        re.search(r'\d+-\d+,\s*JALAN', line) or 
-                        'CITY CENTRE' in line):
-                        # Found address pattern, collect it and surrounding lines
-                        address_parts = [line]
-                        # Check next few lines for continuation
-                        for j in range(i + 1, min(i + 5, len(lines))):
-                            next_addr = lines[j].strip()
-                            # Skip labels but include address continuation
-                            if next_addr in ['Business Address', 'Registered Address']:
-                                continue
-                            if (('KUALA LUMPUR' in next_addr or 'MALAYSIA' in next_addr or 
-                                 'JALAN AMPANG' in next_addr or '50450' in next_addr) and 
-                                'Office No' not in next_addr):
-                                address_parts.append(next_addr)
-                            elif 'Office No' in next_addr or 'Fax' in next_addr or 'Email' in next_addr:
-                                break
-                        company_info['business_address'] = ' '.join(address_parts)
-                        break
+            # Generic multi-line address extraction logic
+            company_info['business_address'] = self._extract_multi_line_address(lines)
             
             # Extract business phone
             if 'Business Phone' in line:
@@ -427,6 +383,135 @@ class OCRService:
                     company_info['business_phone'] = phone_match.group()
         
         return company_info
+    
+    def _extract_multi_line_address(self, lines):
+        """Generic multi-line address extraction logic"""
+        import re
+        
+        # Common Malaysian address patterns and indicators
+        address_indicators = [
+            # Building/unit patterns
+            r'[A-Z]?\d{1,3}-?\d{1,3}-?\d{1,3}[A-Z]?',  # B12-03, A-3-4, etc.
+            r'[A-Z]\d{4}',  # B1203, A1234, etc.
+            r'LOT\s+\w+',  # LOT W17A2
+            r'UNIT\s+\d+',  # UNIT 123
+            r'NO\.?\s*\d+',  # NO. 123, NO 123
+            # Street patterns
+            r'JALAN\s+\w+',  # JALAN AMPANG
+            r'PERSIARAN\s+\w+',  # PERSIARAN DR GEORGE
+            r'LORONG\s+\w+',  # LORONG 123
+            # Area patterns
+            r'TAMAN\s+\w+',  # TAMAN EQUINE
+            r'BANDAR\s+\w+',  # BANDAR UTAMA
+            r'KEPONG\s+\w+',  # KEPONG BARU
+            # Building names
+            r'WISMA\s+\w+',  # WISMA GOLDEN EAGLE
+            r'MENARA\s+\w+',  # MENARA KUALA LUMPUR
+            r'PLAZA\s+\w+',  # PLAZA MONT KIARA
+            r'RESIDENCE\s*',  # SPRINGVILLE RESIDENCE
+            r'CONDOMINIUM\s*',  # Various condominiums
+            # Postal codes
+            r'\d{5}\s+\w+',  # 43300 SERI KEMBANGAN
+            # States
+            r'KUALA\s+LUMPUR',
+            r'SELANGOR',
+            r'JOHOR',
+            r'PENANG',
+            r'PERAK',
+            r'SABAH',
+            r'SARAWAK',
+            r'KEDAH',
+            r'KELANTAN',
+            r'TERENGGANU',
+            r'PAHANG',
+            r'NEGERI\s+SEMBILAN',
+            r'MELAKA',
+            r'PERLIS',
+            r'PUTRAJAYA',
+            r'LABUAN'
+        ]
+        
+        # Find potential address lines
+        address_candidates = []
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            
+            # Skip empty lines and obvious non-address content
+            if not line or line in ['Business Address', 'Registered Address', 'NIL']:
+                continue
+            
+            # Skip lines that are clearly not addresses
+            if any(keyword in line for keyword in ['Business Phone', 'Fax', 'Email', 'Office No NIL', 'PARTICULARS', 'DIRECTOR', 'MEMBER']):
+                continue
+            
+            # Check if line contains address indicators
+            address_score = 0
+            for pattern in address_indicators:
+                if re.search(pattern, line, re.IGNORECASE):
+                    address_score += 1
+            
+            # Add lines with postal codes (strong indicator)
+            if re.search(r'\d{5}', line):
+                address_score += 2
+            
+            # Add lines with MALAYSIA (strong indicator)
+            if 'MALAYSIA' in line:
+                address_score += 2
+            
+            # Store potential address lines with scores
+            if address_score > 0:
+                address_candidates.append((i, line, address_score))
+        
+        if not address_candidates:
+            return None
+        
+        # Sort by score (highest first) and group consecutive lines
+        address_candidates.sort(key=lambda x: x[2], reverse=True)
+        
+        # Find the best address group (consecutive lines with highest combined score)
+        best_address_group = []
+        best_score = 0
+        
+        # Sort by line index to process in order
+        address_candidates.sort(key=lambda x: x[0])
+        
+        # Look for consecutive high-scoring lines
+        for i, (start_idx, start_line, start_score) in enumerate(address_candidates):
+            current_group = [start_line]
+            current_score = start_score
+            
+            # Look for the next consecutive line(s)
+            for j in range(i + 1, len(address_candidates)):
+                next_idx, next_line, next_score = address_candidates[j]
+                
+                # Check if this line is consecutive (within 2 lines) and has good score
+                if (next_idx <= start_idx + 2 and next_score >= 3 and 
+                    not any(keyword in next_line for keyword in ['Business Phone', 'Fax', 'Email', 'Office No'])):
+                    current_group.append(next_line)
+                    current_score += next_score
+                    start_idx = next_idx  # Update for next iteration
+                else:
+                    break  # Stop if not consecutive
+            
+            # Update best group if this one is better
+            if current_score > best_score:
+                best_score = current_score
+                best_address_group = current_group
+        
+        if not best_address_group:
+            return None
+        
+        # Clean up and format the address
+        formatted_address = ', '.join(best_address_group)
+        
+        # Clean up common formatting issues
+        formatted_address = re.sub(r'B-(\d{1,2})-(\d{2})', r'B\1\2', formatted_address)  # B-12-03 -> B1203
+        formatted_address = re.sub(r'\s+', ' ', formatted_address)  # Multiple spaces -> single space
+        formatted_address = re.sub(r',\s*,', ',', formatted_address)  # Remove double commas
+        formatted_address = formatted_address.strip(', ')  # Remove leading/trailing commas
+        
+        return formatted_address if formatted_address else None
     
     def _extract_director_info(self, text_content):
         """Extract director information from text content"""
