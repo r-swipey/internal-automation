@@ -442,17 +442,30 @@
             if (data.company_name) {
                 html += `<div class="extraction-item"><strong>🏢 Company:</strong> ${data.company_name}</div>`;
             }
-            if (data.director_name) {
-                html += `<div class="extraction-item"><strong>👤 Director:</strong> ${data.director_name}</div>`;
-            }
-            if (data.member_name) {
-                html += `<div class="extraction-item"><strong>👥 Member:</strong> ${data.member_name}</div>`;
-            }
-            if (data.email) {
-                html += `<div class="extraction-item"><strong>📧 Email:</strong> ${data.email}</div>`;
+            if (data.registration_number) {
+                html += `<div class="extraction-item"><strong>📋 Registration:</strong> ${data.registration_number}</div>`;
             }
             if (data.incorporation_date) {
                 html += `<div class="extraction-item"><strong>📅 Incorporation Date:</strong> ${data.incorporation_date}</div>`;
+            }
+            if (data.company_type) {
+                html += `<div class="extraction-item"><strong>🏢 Type:</strong> ${data.company_type}</div>`;
+            }
+            if (data.business_address) {
+                html += `<div class="extraction-item"><strong>📍 Address:</strong> ${data.business_address}</div>`;
+            }
+            if (data.business_phone) {
+                html += `<div class="extraction-item"><strong>📞 Phone:</strong> ${data.business_phone}</div>`;
+            }
+            if (data.directors && data.directors.length > 0) {
+                html += `<div class="extraction-item"><strong>👥 Directors:</strong><br>`;
+                data.directors.forEach(director => {
+                    html += `<div style="margin-left: 20px;">• ${director.name || 'Unknown'}`;
+                    if (director.id_number) html += ` (${director.id_number})`;
+                    if (director.email) html += ` - ${director.email}`;
+                    html += `</div>`;
+                });
+                html += `</div>`;
             }
             
             extractionPreview.innerHTML = html;

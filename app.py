@@ -305,7 +305,9 @@ def process_document_ocr(s3_key, document_id):
         print(f"Textract response received! Found {len(response['Blocks'])} blocks")
         
         # Extract key-value pairs and text
-        extracted_data = extract_key_information(response)
+        from services.ocr_service import OCRService
+        ocr_service = OCRService(supabase)
+        extracted_data = ocr_service._extract_key_information(response)
         
         print(f"Extracted data: {extracted_data}")
         
@@ -314,10 +316,13 @@ def process_document_ocr(s3_key, document_id):
         update_result = supabase.table('documents').update({
             'ocr_status': 'completed',
             'ocr_completed_at': datetime.now().isoformat(),
-            'extracted_name': extracted_data.get('name'),
-            'extracted_email': extracted_data.get('email'),
             'extracted_company_name': extracted_data.get('company_name'),
-            'extracted_registration_number': extracted_data.get('registration_number')
+            'extracted_registration_number': extracted_data.get('registration_number'),
+            'extracted_incorporation_date': extracted_data.get('incorporation_date'),
+            'extracted_company_type': extracted_data.get('company_type'),
+            'extracted_business_address': extracted_data.get('business_address'),
+            'extracted_business_phone': extracted_data.get('business_phone'),
+            'extracted_directors': extracted_data.get('directors', [])
         }).eq('id', document_id).execute()
         
         print("Database updated successfully!")
@@ -352,72 +357,7 @@ def process_document_ocr(s3_key, document_id):
             'ocr_status': 'failed'
         }
 
-def extract_key_information(textract_response):
-    """Extract specific fields from Textract response - optimized for Malaysian forms"""
-    extracted_data = {
-        'name': None,
-        'email': None,
-        'company_name': None,
-        'registration_number': None
-    }
-    
-    # Get all text blocks
-    blocks = textract_response['Blocks']
-    
-    # First, try to extract from key-value pairs
-    key_map = {}
-    value_map = {}
-    block_map = {}
-    
-    for block in blocks:
-        block_id = block['Id']
-        block_map[block_id] = block
-        
-        if block['BlockType'] == "KEY_VALUE_SET":
-            if 'KEY' in block['EntityTypes']:
-                key_map[block_id] = block
-            else:
-                value_map[block_id] = block
-    
-    # Extract text from key-value relationships
-    for key_id, key_block in key_map.items():
-        if 'Relationships' in key_block:
-            for relationship in key_block['Relationships']:
-                if relationship['Type'] == 'CHILD':
-                    key_text = get_text_from_blocks(relationship['Ids'], block_map)
-                    
-                    # Find corresponding value
-                    for rel in key_block.get('Relationships', []):
-                        if rel['Type'] == 'VALUE':
-                            for value_id in rel['Ids']:
-                                if value_id in value_map:
-                                    value_block = value_map[value_id]
-                                    if 'Relationships' in value_block:
-                                        for value_rel in value_block['Relationships']:
-                                            if value_rel['Type'] == 'CHILD':
-                                                value_text = get_text_from_blocks(value_rel['Ids'], block_map)
-                                                
-                                                # Match patterns
-                                                if any(keyword in key_text.lower() for keyword in ['name', 'nama']):
-                                                    extracted_data['name'] = value_text
-                                                elif any(keyword in key_text.lower() for keyword in ['email', 'e-mail']):
-                                                    extracted_data['email'] = value_text
-                                                elif any(keyword in key_text.lower() for keyword in ['company', 'syarikat']):
-                                                    extracted_data['company_name'] = value_text
-                                                elif any(keyword in key_text.lower() for keyword in ['registration', 'pendaftaran', 'no']):
-                                                    extracted_data['registration_number'] = value_text
-    
-    return extracted_data
-
-def get_text_from_blocks(block_ids, block_map):
-    """Helper function to extract text from block IDs"""
-    text = ""
-    for block_id in block_ids:
-        if block_id in block_map:
-            block = block_map[block_id]
-            if block['BlockType'] == 'WORD':
-                text += block.get('Text', '') + " "
-    return text.strip()
+# Removed old extract_key_information and get_text_from_blocks functions - now using OCR service
 
 # Async OCR processing function
 # Asynchronous Textract implementation (like the console uses)
@@ -479,7 +419,9 @@ def check_textract_job_status(job_id):
         
         if job_status == 'SUCCEEDED':
             # Job completed successfully
-            extracted_data = extract_key_information(response)
+            from services.ocr_service import OCRService
+            ocr_service = OCRService(supabase)
+            extracted_data = ocr_service._extract_key_information(response)
             
             return {
                 'success': True,
@@ -559,10 +501,13 @@ def process_document_ocr_async(s3_key, document_id):
                 supabase.table('documents').update({
                     'ocr_status': 'completed',
                     'ocr_completed_at': datetime.now().isoformat(),
-                    'extracted_name': extracted_data.get('name'),
-                    'extracted_email': extracted_data.get('email'),
                     'extracted_company_name': extracted_data.get('company_name'),
-                    'extracted_registration_number': extracted_data.get('registration_number')
+                    'extracted_registration_number': extracted_data.get('registration_number'),
+                    'extracted_incorporation_date': extracted_data.get('incorporation_date'),
+                    'extracted_company_type': extracted_data.get('company_type'),
+                    'extracted_business_address': extracted_data.get('business_address'),
+                    'extracted_business_phone': extracted_data.get('business_phone'),
+                    'extracted_directors': extracted_data.get('directors', [])
                 }).eq('id', document_id).execute()
                 
                 print(f"ASYNC OCR COMPLETED! Extracted: {extracted_data}")
@@ -1569,9 +1514,12 @@ def upload_file_with_conversion(token):
             'conversion_info': conversion_info,
             'extracted_preview': {
                 'company_name': extracted_data.get('company_name'),
-                'name': extracted_data.get('name'),
-                'email': extracted_data.get('email'),
-                'registration_number': extracted_data.get('registration_number')
+                'registration_number': extracted_data.get('registration_number'),
+                'incorporation_date': extracted_data.get('incorporation_date'),
+                'company_type': extracted_data.get('company_type'),
+                'business_address': extracted_data.get('business_address'),
+                'business_phone': extracted_data.get('business_phone'),
+                'directors': extracted_data.get('directors', [])
             },
             'debug_info': {
                 's3_key': s3_result['key'],
@@ -1876,15 +1824,30 @@ def send_completion_email(customer_email, document_info, extracted_data):
             extracted_html = "<h4>Extracted Information:</h4><ul>"
             
             if extracted_data.get('company_name'):
-                extracted_html += f"<li><strong>Company:</strong> {extracted_data['company_name']}</li>"
-            if extracted_data.get('director_name'):
-                extracted_html += f"<li><strong>Director:</strong> {extracted_data['director_name']}</li>"
-            if extracted_data.get('member_name'):
-                extracted_html += f"<li><strong>Member:</strong> {extracted_data['member_name']}</li>"
-            if extracted_data.get('email'):
-                extracted_html += f"<li><strong>Email:</strong> {extracted_data['email']}</li>"
+                extracted_html += f"<li><strong>Company Name:</strong> {extracted_data['company_name']}</li>"
+            if extracted_data.get('registration_number'):
+                extracted_html += f"<li><strong>Registration Number:</strong> {extracted_data['registration_number']}</li>"
             if extracted_data.get('incorporation_date'):
                 extracted_html += f"<li><strong>Incorporation Date:</strong> {extracted_data['incorporation_date']}</li>"
+            if extracted_data.get('company_type'):
+                extracted_html += f"<li><strong>Company Type:</strong> {extracted_data['company_type']}</li>"
+            if extracted_data.get('business_address'):
+                extracted_html += f"<li><strong>Business Address:</strong> {extracted_data['business_address']}</li>"
+            if extracted_data.get('business_phone'):
+                extracted_html += f"<li><strong>Business Phone:</strong> {extracted_data['business_phone']}</li>"
+            
+            # Display directors
+            directors = extracted_data.get('directors', [])
+            if directors:
+                extracted_html += "<li><strong>Directors:</strong><ul>"
+                for director in directors:
+                    extracted_html += f"<li>{director.get('name', 'Unknown')}"
+                    if director.get('id_number'):
+                        extracted_html += f" (ID: {director['id_number']})"
+                    if director.get('email'):
+                        extracted_html += f" - {director['email']}"
+                    extracted_html += "</li>"
+                extracted_html += "</ul></li>"
             
             extracted_html += "</ul>"
         
@@ -2046,8 +2009,10 @@ def upload_file_with_async_ocr(token):
         print(f"Starting ASYNC OCR processing (like console)...")
         
         try:
-            # Start async processing
-            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'])
+            # Use the OCR service
+            from services.ocr_service import OCRService
+            ocr_service = OCRService(supabase)
+            ocr_result = ocr_service.process_document_async(s3_result['key'], db_result['id'])
             ocr_success = ocr_result.get('success', False)
             extracted_data = ocr_result.get('extracted_data', {})
             
@@ -2076,10 +2041,12 @@ def upload_file_with_async_ocr(token):
             'conversion_info': conversion_info,
             'extracted_preview': {
                 'company_name': extracted_data.get('company_name'),
-                'director_name': extracted_data.get('director_name'),
-                'member_name': extracted_data.get('member_name'),
-                'email': extracted_data.get('email'),
-                'incorporation_date': extracted_data.get('incorporation_date')
+                'registration_number': extracted_data.get('registration_number'),
+                'incorporation_date': extracted_data.get('incorporation_date'),
+                'company_type': extracted_data.get('company_type'),
+                'business_address': extracted_data.get('business_address'),
+                'business_phone': extracted_data.get('business_phone'),
+                'directors': extracted_data.get('directors', [])
             },
             'debug_info': {
                 's3_key': s3_result['key'],
@@ -2105,7 +2072,8 @@ def upload_page_async(token):
         customer_data = decode_customer_token(token)
         
         return render_template('upload_async.html', 
-                             customer_email=customer_data['email'], 
+                             customer_email=customer_data['email'],
+                             customer_name=customer_data['email'], 
                              token=token)
     except Exception as e:
         return jsonify({'error': 'Invalid upload link'}), 400
@@ -2202,10 +2170,12 @@ def upload_file_async_with_emails(token):
                     'emails_sent': ['processing_started', 'processing_completed'],
                     'extracted_preview': {
                         'company_name': extracted_data.get('company_name'),
-                        'director_name': extracted_data.get('director_name'),
-                        'member_name': extracted_data.get('member_name'),
-                        'email': extracted_data.get('email'),
-                        'incorporation_date': extracted_data.get('incorporation_date')
+                        'registration_number': extracted_data.get('registration_number'),
+                        'incorporation_date': extracted_data.get('incorporation_date'),
+                        'company_type': extracted_data.get('company_type'),
+                        'business_address': extracted_data.get('business_address'),
+                        'business_phone': extracted_data.get('business_phone'),
+                        'directors': extracted_data.get('directors', [])
                     }
                 })
             else:
