@@ -138,7 +138,7 @@ def save_document_metadata(customer_data, s3_data, file_info):
         raise e
 
 def update_company_kyb_status(clickup_task_id, status):
-    """Update kyb_status in Companies table"""
+    """Update kyb_status in Companies table and notify ClickUp"""
     try:
         if not supabase:
             print("Warning: Supabase not configured, skipping status update")
@@ -149,6 +149,30 @@ def update_company_kyb_status(clickup_task_id, status):
         }).eq('clickup_task_id', clickup_task_id).execute()
         
         print(f"Updated company kyb_status to {status} for task {clickup_task_id}")
+        
+        # Notify ClickUp of KYB status change
+        try:
+            from services.clickup_service import update_clickup_task_status
+            
+            # Get additional info for context
+            additional_info = {}
+            if response.data and len(response.data) > 0:
+                company_data = response.data[0]
+                additional_info = {
+                    'customer_email': company_data.get('email'),
+                    'company_name': company_data.get('company_name')
+                }
+            
+            clickup_result = update_clickup_task_status(clickup_task_id, 'kyb_status', status, additional_info)
+            
+            if clickup_result.get('success'):
+                print(f"✅ ClickUp task {clickup_task_id} updated with KYB status: {status}")
+            else:
+                print(f"⚠️ ClickUp KYB update failed: {clickup_result.get('error')}")
+                
+        except Exception as clickup_error:
+            print(f"⚠️ ClickUp KYB notification failed (non-critical): {clickup_error}")
+        
         return response.data[0] if response.data else None
     except Exception as e:
         print(f'Company status update error: {e}')
@@ -261,6 +285,7 @@ def store_customer_info(customer_data, task_id, token, upload_link):
             'clickup_task_id': task_id,
             'company_name': customer_data['company_name'],
             'typeform_submission_id': customer_data.get('typeform_response_id'),
+            'customer_token': token,  # Store customer token for ClickUp integration lookups
             'kyb_status': 'pending_documents',
             'kyb_failure_reason': None,
             'first_upload_at': None,
@@ -1020,6 +1045,9 @@ def zapier_webhook():
         
         # Store customer info in database for tracking
         customer_record = store_customer_info(data, task_id, token, upload_link)
+        
+        # Notify ClickUp of initial KYB status (pending_documents)
+        update_company_kyb_status(task_id, 'pending_documents')
         
         # Send email with upload link
         email_result = send_upload_email(data['customer_email'], data['customer_name'], upload_link, data['company_name'])
@@ -2020,6 +2048,42 @@ def upload_file_with_async_ocr(token):
         # Update company kyb_status to indicate document uploaded and pending review
         update_company_kyb_status(customer_data['taskId'], 'documents_pending_review')
         
+        # Attach document to ClickUp task and update SSM document field
+        try:
+            from services.clickup_service import attach_document_to_clickup_task
+            
+            # Create temporary file path for ClickUp attachment
+            import tempfile
+            temp_file_path = None
+            
+            try:
+                # Create temporary file with the uploaded content
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{base_filename}") as temp_file:
+                    temp_file.write(file_content)
+                    temp_file_path = temp_file.name
+                
+                print(f"Attaching document to ClickUp task {customer_data['taskId']}: {base_filename}")
+                
+                attachment_result = attach_document_to_clickup_task(
+                    task_id=customer_data['taskId'],
+                    file_path=temp_file_path,
+                    filename=base_filename
+                )
+                
+                if attachment_result.get('success'):
+                    print(f"[OK] Document attached to ClickUp task successfully")
+                    print(f"[OK] SSM document field updated: {attachment_result.get('ssm_field_updated')}")
+                else:
+                    print(f"[WARNING] ClickUp document attachment failed: {attachment_result.get('error')}")
+                    
+            finally:
+                # Clean up temporary file
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                    
+        except Exception as clickup_error:
+            print(f"ClickUp document attachment error (non-critical): {clickup_error}")
+        
         # NEW: Use ASYNC OCR processing (like console)
         print(f"Starting ASYNC OCR processing (like console)...")
         
@@ -2087,12 +2151,14 @@ def upload_page_async(token):
         customer_email = customer_data['email']
         
         # Fetch customer first name from Supabase companies table
-        customer_first_name = customer_email  # Default fallback
+        customer_first_name = "Customer"  # Default fallback
         if supabase:
             try:
                 response = supabase.table('companies').select('customer_first_name').eq('clickup_task_id', task_id).execute()
                 if response.data and response.data[0].get('customer_first_name'):
                     customer_first_name = response.data[0]['customer_first_name']
+                else:
+                    print(f"No customer_first_name found for task {task_id}")
             except Exception as e:
                 print(f"Could not fetch customer_first_name: {e}")
         

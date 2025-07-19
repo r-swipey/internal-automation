@@ -93,6 +93,9 @@ class OCRService:
                     'textract_job_id': job_id,
                     'ocr_started_at': datetime.now().isoformat()
                 }).eq('id', document_id).execute()
+                
+                # Send ClickUp notification for OCR processing start
+                self._send_clickup_ocr_notification(document_id, 'processing', {})
             
             # Step 3: Poll for completion
             max_attempts = 30  # 5 minutes max
@@ -698,15 +701,20 @@ class OCRService:
                                    'CERTIFI ED COPY', 'CERTIFIED COPY', 'COMPAN SECRETARY', 
                                    'COMPANY SECRETARY', 'COPY', 'SECRETARY', 'LODGER', 'PARTICULARS OF LODGER']
                 
-                # Check if this name appears right after "CERTIFIED TRUE COPY" (rubber stamp section)
-                is_in_stamp_section = False
-                for check_line in range(max(0, i-3), i):
-                    if 'CERTIFIED TRUE COPY' in lines[check_line]:
-                        is_in_stamp_section = True
+                # Check if this name appears right after certification stamps or company secretary sections
+                is_in_excluded_section = False
+                for check_line in range(max(0, i-5), i):
+                    check_text = lines[check_line].upper()
+                    if ('CERTIFIED TRUE COPY' in check_text or 
+                        'CERTIFIED COPY' in check_text or
+                        'CERTIFI ED COPY' in check_text or  # OCR artifact
+                        'COMPANY SECRETARY' in check_text or
+                        'COMPAN SECRETARY' in check_text):  # OCR artifact
+                        is_in_excluded_section = True
                         break
                 
-                # Skip if in stamp section
-                if is_in_stamp_section:
+                # Skip if in excluded section
+                if is_in_excluded_section:
                     continue
                 
                 if ('A/L' in line or 'A/P' in line or 'BIN' in line or 
@@ -908,10 +916,119 @@ class OCRService:
             print(f"Database update result: {result}")
             print("Database updated successfully!")
             
+            # Send ClickUp notification for OCR status update
+            self._send_clickup_ocr_notification(document_id, status, extracted_data)
+            
+            # Update ClickUp director fields if OCR completed successfully
+            if status == 'completed' and extracted_data and extracted_data.get('directors'):
+                self._update_clickup_director_fields(document_id, extracted_data.get('directors', []))
+            
         except Exception as e:
             print(f"Failed to update database: {e}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
+    
+    def _send_clickup_ocr_notification(self, document_id, ocr_status, extracted_data):
+        """Send ClickUp notification for OCR status update"""
+        try:
+            # Get ClickUp task ID directly from document
+            if not self.supabase:
+                print("Warning: No Supabase client for ClickUp lookup")
+                return
+            
+            # Get document info to find the ClickUp task ID
+            doc_result = self.supabase.table('documents').select('clickup_task_id').eq('id', document_id).execute()
+            if not doc_result.data:
+                print(f"Warning: Document {document_id} not found for ClickUp notification")
+                return
+            
+            document = doc_result.data[0]
+            clickup_task_id = document.get('clickup_task_id')
+            
+            if not clickup_task_id:
+                print(f"Warning: No clickup_task_id found for document {document_id}")
+                return
+            
+            # Import and use ClickUp service
+            from .clickup_service import update_clickup_task_status
+            
+            # Prepare additional info for ClickUp comment
+            additional_info = {}
+            if extracted_data and ocr_status == 'completed':
+                additional_info['extracted_data'] = extracted_data
+            
+            # Send ClickUp notification
+            print(f"Sending ClickUp OCR status notification: task={clickup_task_id}, status={ocr_status}")
+            result = update_clickup_task_status(
+                task_id=clickup_task_id,
+                status_type='ocr_status',
+                status_value=ocr_status,
+                additional_info=additional_info
+            )
+            
+            if result.get('success'):
+                print(f"✅ ClickUp OCR notification sent successfully")
+            else:
+                print(f"⚠️ ClickUp OCR notification failed: {result.get('error')}")
+                
+        except Exception as e:
+            print(f"ClickUp OCR notification error (non-critical): {e}")
+            # Don't let ClickUp errors break the OCR process
+    
+    def _update_clickup_director_fields(self, document_id, directors_data):
+        """Update ClickUp director fields with first director from extracted data"""
+        try:
+            if not directors_data or len(directors_data) == 0:
+                print(f"[INFO] No directors data available for ClickUp director fields update")
+                return
+            
+            # Get ClickUp task ID directly from document
+            if not self.supabase:
+                print("Warning: No Supabase client for ClickUp director fields lookup")
+                return
+            
+            # Get document info to find the ClickUp task ID
+            doc_result = self.supabase.table('documents').select('clickup_task_id').eq('id', document_id).execute()
+            if not doc_result.data:
+                print(f"Warning: Document {document_id} not found for ClickUp director fields update")
+                return
+            
+            document = doc_result.data[0]
+            clickup_task_id = document.get('clickup_task_id')
+            
+            if not clickup_task_id:
+                print(f"Warning: No clickup_task_id found for document {document_id}")
+                return
+            
+            if not clickup_task_id:
+                print(f"Warning: No ClickUp task ID found for customer {customer_token}")
+                return
+            
+            # Import and use ClickUp director fields service
+            from .clickup_service import update_clickup_director_fields
+            
+            # Extract first director info
+            first_director = directors_data[0]
+            director_name = first_director.get('name', '')
+            director_email = first_director.get('email', '') 
+            
+            print(f"Updating ClickUp director fields for task {clickup_task_id}")
+            print(f"Director Name: {director_name}")
+            print(f"Director Email: {director_email}")
+            
+            # Update ClickUp director fields
+            result = update_clickup_director_fields(clickup_task_id, directors_data)
+            
+            if result.get('success'):
+                print(f"[OK] ClickUp director fields updated successfully")
+                print(f"   Name updated: {result.get('name_updated')}")
+                print(f"   Email updated: {result.get('email_updated')}")
+            else:
+                print(f"[WARNING] ClickUp director fields update failed: {result.get('error')}")
+                
+        except Exception as e:
+            print(f"ClickUp director fields update error (non-critical): {e}")
+            # Don't let ClickUp errors break the OCR process
 
 
 # Legacy wrapper functions for backward compatibility
