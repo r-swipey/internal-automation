@@ -162,8 +162,11 @@ def send_upload_email(customer_email, customer_name, upload_link, company_name=N
             return {'success': False, 'error': 'SendGrid not configured'}
         
         # Use dynamic template with template data
+        from_email_address = os.getenv('FROM_EMAIL')
+        from_name = os.getenv('FROM_NAME', 'Swipey Team')  # Default fallback
+        
         message = Mail(
-            from_email=os.getenv('FROM_EMAIL'),
+            from_email=(from_email_address, from_name),  # (email, name) tuple
             to_emails=customer_email
         )
         
@@ -692,8 +695,11 @@ def test_sendgrid():
     
     try:
         # Test SendGrid connection by sending a test email
+        from_email_address = os.getenv('FROM_EMAIL')
+        from_name = os.getenv('FROM_NAME', 'Swipey Team')
+        
         message = Mail(
-            from_email=os.getenv('FROM_EMAIL'),
+            from_email=(from_email_address, from_name),
             to_emails='kalyanamo@gmail.com',
             subject='SendGrid Test Email',
             html_content='<p>This is a test email from your KYB automation system.</p>'
@@ -1885,8 +1891,11 @@ def send_completion_email(customer_email, document_info, extracted_data):
         </html>
         '''
         
+        from_email_address = os.getenv('FROM_EMAIL', 'hi@swipey.co')
+        from_name = os.getenv('FROM_NAME', 'Swipey Team')
+        
         message = Mail(
-            from_email=os.getenv('FROM_EMAIL', 'kalyana.mohan@swipey.co'),
+            from_email=(from_email_address, from_name),
             to_emails=customer_email,
             subject=subject,
             html_content=html_content
@@ -1932,8 +1941,11 @@ def send_failure_email(customer_email, document_info):
         </html>
         '''
         
+        from_email_address = os.getenv('FROM_EMAIL', 'hi@swipey.co')
+        from_name = os.getenv('FROM_NAME', 'Swipey Team')
+        
         message = Mail(
-            from_email=os.getenv('FROM_EMAIL', 'kalyana.mohan@swipey.co'),
+            from_email=(from_email_address, from_name),
             to_emails=customer_email,
             subject=subject,
             html_content=html_content
