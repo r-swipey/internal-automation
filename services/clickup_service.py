@@ -49,6 +49,15 @@ class ClickUpService:
             # Update task custom fields if available
             self._update_custom_fields(task_id, status_type, status_value)
             
+            # ALSO update task description with extracted data if OCR completed
+            if status_type == 'ocr_status' and status_value == 'completed' and additional_info and additional_info.get('extracted_data'):
+                print(f"[INFO] Updating task description with OCR data...")
+                description_result = self.update_task_description_with_ocr_data(task_id, additional_info['extracted_data'])
+                if description_result.get('success'):
+                    print(f"[OK] Task description updated with extracted company information")
+                else:
+                    print(f"[WARNING] Task description update failed: {description_result.get('error')}")
+            
             return result
             
         except Exception as e:
@@ -612,7 +621,8 @@ class ClickUpService:
                         'id': task_data.get('id'),
                         'name': task_data.get('name'),
                         'status': task_data.get('status', {}).get('status'),
-                        'url': task_data.get('url')
+                        'url': task_data.get('url'),
+                        'description': task_data.get('description', '')
                     }
                 }
             else:
@@ -620,6 +630,112 @@ class ClickUpService:
                 
         except Exception as e:
             return {'success': False, 'error': str(e)}
+    
+    def update_task_description_with_ocr_data(self, task_id, extracted_data):
+        """Update task description with extracted OCR information"""
+        try:
+            if not self.api_token:
+                print("Warning: ClickUp API token not configured")
+                return {'success': False, 'error': 'No API token'}
+            
+            # Get current task info
+            task_info = self.get_task_info(task_id)
+            if not task_info.get('success'):
+                print(f"Could not get task info: {task_info.get('error')}")
+                return task_info
+            
+            current_description = task_info['task'].get('description', '')
+            
+            # Create OCR information section
+            ocr_section = self._create_ocr_description_section(extracted_data)
+            
+            # Check if OCR section already exists and update/append accordingly
+            ocr_marker = "## 📋 EXTRACTED COMPANY INFORMATION"
+            
+            if ocr_marker in current_description:
+                # Replace existing OCR section
+                lines = current_description.split('\n')
+                new_lines = []
+                skip_until_next_section = False
+                
+                for line in lines:
+                    if line.startswith(ocr_marker):
+                        skip_until_next_section = True
+                        new_lines.append(ocr_section)
+                    elif skip_until_next_section and line.startswith('## '):
+                        skip_until_next_section = False
+                        new_lines.append(line)
+                    elif not skip_until_next_section:
+                        new_lines.append(line)
+                
+                new_description = '\n'.join(new_lines).strip()
+            else:
+                # Append OCR section to existing description
+                if current_description.strip():
+                    new_description = f"{current_description.strip()}\n\n{ocr_section}"
+                else:
+                    new_description = ocr_section
+            
+            # Update task description
+            url = f"{self.base_url}/task/{task_id}"
+            payload = {
+                'description': new_description
+            }
+            
+            response = requests.put(url, headers=self.headers, json=payload, timeout=15)
+            
+            if response.status_code == 200:
+                print(f"[OK] Updated task description with OCR data for task {task_id}")
+                return {'success': True}
+            else:
+                error_msg = f"Task description update failed: {response.status_code} - {response.text}"
+                print(f"[WARNING] {error_msg}")
+                return {'success': False, 'error': error_msg}
+                
+        except Exception as e:
+            print(f"Task description update failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _create_ocr_description_section(self, extracted_data):
+        """Create formatted OCR information section for task description"""
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        section = f"""## 📋 EXTRACTED COMPANY INFORMATION
+*Last updated: {timestamp}*
+
+"""
+        
+        if extracted_data.get('company_name'):
+            section += f"**🏢 Company Name:** {extracted_data['company_name']}\n"
+        
+        if extracted_data.get('registration_number'):
+            section += f"**📄 Registration Number:** {extracted_data['registration_number']}\n"
+        
+        if extracted_data.get('incorporation_date'):
+            section += f"**📅 Incorporation Date:** {extracted_data['incorporation_date']}\n"
+        
+        if extracted_data.get('business_address'):
+            section += f"**📍 Business Address:** {extracted_data['business_address']}\n"
+        
+        if extracted_data.get('directors'):
+            directors = extracted_data['directors']
+            section += f"**👥 Directors:** {len(directors)} found\n"
+            for i, director in enumerate(directors[:3], 1):  # Show first 3 directors
+                name = director.get('name', 'Unknown')
+                email = director.get('email', '')
+                if email:
+                    section += f"  {i}. **{name}** - {email}\n"
+                else:
+                    section += f"  {i}. **{name}**\n"
+            
+            if len(directors) > 3:
+                section += f"  ... and {len(directors) - 3} more\n"
+        
+        section += "\n*Automatically extracted from uploaded documents*"
+        
+        return section
 
 
 # Convenience functions for easy import

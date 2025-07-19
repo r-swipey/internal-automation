@@ -290,6 +290,50 @@ class TestOCRProcessingComprehensive(unittest.TestCase):
                 print("⚠️  OCR processing failed - check logs for details")
         
         return document_id
+    
+    def test_ocr_database_update_bug(self):
+        \"\"\"Test that OCR processing updates database status from 'processing' to 'completed'\"\"\"
+        print(\"\\n🔍 Testing OCR database update bug...\")
+        
+        # Step 1: Create customer via webhook
+        webhook_test = TestZapierWebhookComprehensive()
+        webhook_test.setUp()
+        token = webhook_test.test_zapier_webhook_with_full_verification()
+        
+        # Step 2: Upload document
+        pdf_content = create_test_pdf()
+        files = {'document': ('test_company_registration.pdf', pdf_content, 'application/pdf')}
+        
+        response = requests.post(
+            f\"{self.base_url}/upload-file-async/{token}\",
+            files=files
+        )
+        
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        document_id = data.get('documentId')
+        
+        # Step 3: Verify initial status is 'processing'
+        initial_record = self.verify_document_in_database(document_id)
+        self.assertEqual(initial_record.get('ocr_status'), 'processing')
+        print(f\"✅ Initial OCR status: {initial_record.get('ocr_status')}\")
+        
+        # Step 4: Wait for completion and verify status changes
+        final_record = self.wait_for_ocr_completion(document_id, timeout=60)
+        
+        # Step 5: Assert that bug is fixed
+        self.assertIsNotNone(final_record, \"OCR processing should complete\")
+        self.assertEqual(final_record.get('ocr_status'), 'completed', \"OCR status should be 'completed', not stuck on 'processing'\")
+        
+        # Step 6: Verify extracted data is populated
+        self.assertIsNotNone(final_record.get('extracted_company_name'), \"Company name should be extracted\")
+        self.assertIsNotNone(final_record.get('extracted_registration_number'), \"Registration number should be extracted\")
+        
+        print(f\"✅ OCR database update bug test passed!\")
+        print(f\"   Final status: {final_record.get('ocr_status')}\")
+        print(f\"   Extracted company: {final_record.get('extracted_company_name')}\")
+        
+        return document_id
 
 
 class TestSystemIntegrationComprehensive(unittest.TestCase):
