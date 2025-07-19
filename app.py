@@ -155,7 +155,7 @@ def update_company_kyb_status(clickup_task_id, status):
         return None
 
 # SendGrid email functions
-def send_upload_email(customer_email, customer_name, upload_link):
+def send_upload_email(customer_email, customer_name, upload_link, company_name=None):
     """Send upload link email to customer via SendGrid dynamic template"""
     try:
         if not sg:
@@ -173,7 +173,8 @@ def send_upload_email(customer_email, customer_name, upload_link):
         # Set dynamic template data
         message.dynamic_template_data = {
             'customer_name': customer_name,
-            'upload_link': upload_link
+            'upload_link': upload_link,
+            'Company_name': company_name or 'your company'  # Add Company_name for template
         }
         
         response = sg.send(message)
@@ -251,6 +252,8 @@ def store_customer_info(customer_data, task_id, token, upload_link):
         # Create companies table record matching the schema
         company_record = {
             'email': customer_data['customer_email'],
+            'customer_name': customer_data['customer_name'],  # Add customer_name field
+            'customer_first_name': customer_data.get('customer_first_name'),  # Add customer_first_name field
             'phone': customer_data.get('phone'),
             'clickup_task_id': task_id,
             'company_name': customer_data['company_name'],
@@ -802,7 +805,7 @@ def test_send_email():
         upload_link = f"{request.host_url}upload-async/{token}"
         
         # Send email
-        email_result = send_upload_email(customer_email, customer_name, upload_link)
+        email_result = send_upload_email(customer_email, customer_name, upload_link, "Test Company")
         
         return jsonify({
             'success': True,
@@ -861,7 +864,7 @@ def test_async_textract(token):
         print(f"Testing ASYNC Textract on: {s3_key}")
         
         # Process with async method
-        result = process_document_ocr_async(s3_key, document_id)
+        result = process_document_ocr_async(s3_key, document_id, supabase)
         
         return jsonify({
             "status": "async_test_complete",
@@ -1013,7 +1016,7 @@ def zapier_webhook():
         customer_record = store_customer_info(data, task_id, token, upload_link)
         
         # Send email with upload link
-        email_result = send_upload_email(data['customer_email'], data['customer_name'], upload_link)
+        email_result = send_upload_email(data['customer_email'], data['customer_name'], upload_link, data['company_name'])
         
         # Optionally update ClickUp task with upload link (if you want)
         update_clickup_with_upload_link(task_id, upload_link, data)
@@ -1495,7 +1498,7 @@ def upload_file_with_conversion(token):
         # Process with ASYNC OCR (NEW METHOD)
         print(f"Starting ASYNC OCR processing on converted PDF...")
         try:
-            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'])
+            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'], supabase)
             ocr_success = ocr_result.get('success', False)
             extracted_data = ocr_result.get('extracted_data', {})
             print(f"ASYNC OCR completed. Success: {ocr_success}")
@@ -2002,8 +2005,8 @@ def upload_file_with_async_ocr(token):
         db_result = save_document_metadata(customer_data, s3_result, file_info)
         print(f"Database record created: {db_result['id']}")
         
-        # Update company kyb_status to indicate document uploaded
-        update_company_kyb_status(customer_data['taskId'], 'documents_processing')
+        # Update company kyb_status to indicate document uploaded and pending review
+        update_company_kyb_status(customer_data['taskId'], 'documents_pending_review')
         
         # NEW: Use ASYNC OCR processing (like console)
         print(f"Starting ASYNC OCR processing (like console)...")
@@ -2018,17 +2021,15 @@ def upload_file_with_async_ocr(token):
             
             print(f"ASYNC OCR completed. Success: {ocr_success}")
             
-            # Update company kyb_status based on OCR success
-            if ocr_success:
-                update_company_kyb_status(customer_data['taskId'], 'kyb_passed')
-            else:
-                update_company_kyb_status(customer_data['taskId'], 'kyb_failed')
+            # Note: OCR status is already updated to 'completed' by OCR service
+            # Company kyb_status remains 'documents_pending_review' for manual review
             
         except Exception as ocr_error:
             print(f"ASYNC OCR processing failed: {ocr_error}")
             ocr_success = False
             extracted_data = {}
-            update_company_kyb_status(customer_data['taskId'], 'ocr_failed')
+            # Update companies kyb_status to failed if OCR fails
+            update_company_kyb_status(customer_data['taskId'], 'kyb_failed')
 
         return jsonify({
             'success': True,
@@ -2070,10 +2071,22 @@ def upload_page_async(token):
     """Upload page that uses ASYNC OCR processing"""
     try:
         customer_data = decode_customer_token(token)
+        task_id = customer_data['taskId']
+        customer_email = customer_data['email']
+        
+        # Fetch customer first name from Supabase companies table
+        customer_first_name = customer_email  # Default fallback
+        if supabase:
+            try:
+                response = supabase.table('companies').select('customer_first_name').eq('clickup_task_id', task_id).execute()
+                if response.data and response.data[0].get('customer_first_name'):
+                    customer_first_name = response.data[0]['customer_first_name']
+            except Exception as e:
+                print(f"Could not fetch customer_first_name: {e}")
         
         return render_template('upload_async.html', 
-                             customer_email=customer_data['email'],
-                             customer_name=customer_data['email'], 
+                             customer_email=customer_email,
+                             customer_name=customer_first_name, 
                              token=token)
     except Exception as e:
         return jsonify({'error': 'Invalid upload link'}), 400
@@ -2147,7 +2160,7 @@ def upload_file_async_with_emails(token):
             start_time = time.time()
             
             # Use existing OCR function
-            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'])
+            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'], supabase)
             processing_time = f"{time.time() - start_time:.1f} seconds"
             
             if ocr_result.get('success'):
@@ -2249,7 +2262,7 @@ def test_email_from_supabase(uuid):
         upload_link = f"{request.host_url}upload-async/{token}"
         
         # Send email using dynamic template
-        email_result = send_upload_email(customer_email, customer_name, upload_link)
+        email_result = send_upload_email(customer_email, customer_name, upload_link, "Test Company")
         
         return jsonify({
             'success': True,

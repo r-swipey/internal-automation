@@ -242,6 +242,25 @@ class OCRService:
         # Extract text content for pattern matching
         text_content = self._extract_all_text(blocks)
         
+        # DEBUG: Print raw text structure
+        print("=== RAW TEXT STRUCTURE ===")
+        lines = text_content.split('\n')
+        for i, line in enumerate(lines):
+            if line.strip():
+                print(f"Line {i:3d}: {line.strip()}")
+        print("=== END RAW TEXT ===\n")
+        
+        # Save raw text to file for analysis
+        try:
+            debug_dir = r"C:\Users\kalya\Documents\internal-automation\Debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file_path = os.path.join(debug_dir, 'raw_text_debug.txt')
+            with open(debug_file_path, 'w', encoding='utf-8') as f:
+                f.write(text_content)
+            print(f"Raw text saved to {debug_file_path} for analysis")
+        except Exception as e:
+            print(f"Could not save debug file: {e}")
+        
         # Extract company information using pattern matching
         extracted_data.update(self._extract_company_info(text_content))
         
@@ -312,32 +331,125 @@ class OCRService:
                     if 'SDN. BHD.' in next_line:
                         company_info['company_type'] = 'SDN. BHD.'
             
-            # Extract registration number
-            if re.match(r'\d{12}\s*\(\d{7}-[A-Z]\)', line):
-                company_info['registration_number'] = line
+            # Alternative: Extract company name that appears with SDN BHD pattern 
+            if (not company_info['company_name'] and 
+                re.search(r'sdn\.?\s*bhd\.?', line, re.IGNORECASE) and 
+                len(line.split()) <= 8 and  # Not too long
+                not any(keyword in line.lower() for keyword in ['proposed', 'name', 'company', 'registration', 'business', 'nature'])):
+                company_info['company_name'] = line
+                if re.search(r'sdn\.?\s*bhd\.?', line, re.IGNORECASE):
+                    company_info['company_type'] = 'SDN. BHD.'
             
-            # Extract incorporation date
+            # Extract company name from lines that contain both company name and registration number
+            if (not company_info['company_name'] and 
+                re.search(r'sdn\.?\s*bhd\.?.*\(\d{6,7}-[A-Z]\)', line, re.IGNORECASE)):
+                # Split by registration number pattern to get company name
+                match = re.search(r'(.+?)\s*\(\d{6,7}-[A-Z]\)', line, re.IGNORECASE)
+                if match:
+                    potential_name = match.group(1).strip()
+                    if 'sdn' in potential_name.lower():
+                        company_info['company_name'] = potential_name
+                        company_info['company_type'] = 'SDN. BHD.'
+            
+            # Extract registration number - multiple formats
+            # Format 1: 123456789012 (123456-X) - existing format
+            if re.match(r'\d{12}\s*\(\d{6,7}-[A-Z]\)', line):
+                company_info['registration_number'] = line
+            # Format 2: 12-digit number followed by (6-7digit-letter) in same line
+            elif re.search(r'\d{12}\s*\(\d{6,7}-[A-Z]\)', line):
+                match = re.search(r'(\d{12}\s*\(\d{6,7}-[A-Z]\))', line)
+                if match:
+                    company_info['registration_number'] = match.group(1)
+            # Format 3: standalone 12-digit number  
+            elif re.match(r'^\d{12}$', line) and not company_info['registration_number']:
+                # Check if next line has the bracketed part
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r'^\(\d{6,7}-[A-Z]\)$', next_line):
+                        company_info['registration_number'] = f"{line} {next_line}"
+                    else:
+                        company_info['registration_number'] = line
+                else:
+                    company_info['registration_number'] = line
+            # Format 4: Extract from lines that contain company name and registration number together
+            elif (not company_info['registration_number'] and 
+                  re.search(r'\(\d{6,7}-[A-Z]\)', line)):
+                match = re.search(r'(\d{12}.*?\(\d{6,7}-[A-Z]\))', line)
+                if match:
+                    company_info['registration_number'] = match.group(1).strip()
+            
+            # Extract incorporation date - multiple formats
             if 'Incorporation Date' in line and i + 1 < len(lines):
                 next_line = lines[i + 1].strip()
+                # Format 1: DD/MM/YYYY
                 if re.match(r'\d{2}/\d{2}/\d{4}', next_line):
                     company_info['incorporation_date'] = next_line
+                # Format 2: DD-MM-YYYY 
+                elif re.match(r'\d{2}-\d{2}-\d{4}', next_line):
+                    company_info['incorporation_date'] = next_line
+                # Format 3: DDMMYYYY
+                elif re.match(r'^\d{8}$', next_line):
+                    # Convert DDMMYYYY to DD/MM/YYYY
+                    if len(next_line) == 8:
+                        formatted_date = f"{next_line[:2]}/{next_line[2:4]}/{next_line[4:]}"
+                        company_info['incorporation_date'] = formatted_date
             
-            # Extract business address - improved logic
+            # Alternative: Extract date patterns that appear standalone
+            if (not company_info['incorporation_date'] and 
+                re.match(r'^\d{2}-\d{2}-\d{4}$', line)):
+                company_info['incorporation_date'] = line
+            
+            # Extract business address - improved logic for mixed content
             if 'Business Address' in line:
                 address_lines = []
                 j = i + 1
                 while j < len(lines) and lines[j].strip():
                     current_line = lines[j].strip()
-                    # Stop if we hit other sections or "Office No NIL"
-                    if any(keyword in current_line for keyword in ['Business Phone', 'Fax', 'Email', 'Office No NIL']):
+                    # Stop if we hit other sections
+                    if any(keyword in current_line for keyword in ['Business Phone', 'Fax', 'Email', 'Office No NIL', 'Nature of Business', 'SSM einfo', 'Printing Date', 'MENARA SSM']):
                         break
-                    # Skip lines that are just "NIL"
-                    if current_line != 'NIL':
+                    # Skip lines that are just "NIL" or contain SSM system info
+                    if (current_line != 'NIL' and 
+                        not current_line.startswith('SSM einfo') and
+                        not current_line.startswith('Printing Date') and
+                        not 'MENARA SSM' in current_line and
+                        not current_line.startswith('This company information')):
                         address_lines.append(current_line)
                     j += 1
                 
                 if address_lines:
-                    company_info['business_address'] = ' '.join(address_lines)
+                    # Clean up the address by removing business nature info
+                    clean_address_lines = []
+                    for addr_line in address_lines:
+                        # Stop at business nature descriptions
+                        if any(phrase in addr_line.upper() for phrase in ['TO CARRY ON', 'GENERAL TRADING', 'NATURE OF BUSINESS']):
+                            break
+                        clean_address_lines.append(addr_line)
+                    
+                    if clean_address_lines:
+                        company_info['business_address'] = ' '.join(clean_address_lines)
+            
+            # Alternative: Extract address from lines starting with ": NO." pattern
+            if (not company_info['business_address'] and 
+                line.startswith(': NO.') and 
+                any(word in line.upper() for word in ['JALAN', 'ROAD', 'STREET', 'AVENUE'])):
+                # This looks like an address line, extract it and following lines
+                address_parts = [line[2:].strip()]  # Remove ": " prefix
+                
+                # Look for continuation lines with postal code, state info
+                for k in range(i + 1, min(i + 5, len(lines))):
+                    next_addr_line = lines[k].strip()
+                    # Stop at business nature or SSM info
+                    if any(phrase in next_addr_line.upper() for phrase in ['NATURE OF BUSINESS', 'TO CARRY ON', 'SSM EINFO', 'GENERAL TRADING']):
+                        break
+                    # Include lines with postal codes or Malaysian states
+                    if (re.search(r'\d{5}', next_addr_line) or 
+                        any(state in next_addr_line.upper() for state in ['SELANGOR', 'KUALA LUMPUR', 'JOHOR', 'PENANG', 'PERAK', 'SABAH', 'SARAWAK'])):
+                        address_parts.append(next_addr_line)
+                        break
+                
+                if address_parts:
+                    company_info['business_address'] = ' '.join(address_parts)
             
             # Extract registered address as fallback
             if 'Registered Address' in line:
@@ -520,6 +632,13 @@ class OCRService:
         directors = []
         lines = text_content.split('\n')
         
+        # DEBUG: Show section detection
+        print("=== DIRECTOR SECTION DETECTION ===")
+        for i, line in enumerate(lines):
+            if any(keyword in line for keyword in ['PARTICULARS OF DIRECTOR', 'PARTICULARS OF MEMBER', 'LODGER', 'PART C']):
+                print(f"Line {i:3d}: {line.strip()}")
+        print("=== END SECTION DETECTION ===\n")
+        
         # Find director sections (exclude member sections and lodger sections)
         director_sections = []
         for i, line in enumerate(lines):
@@ -538,12 +657,38 @@ class OCRService:
             for k in range(section_start + 1, min(len(lines), section_start + 50)):
                 if ('PARTICULARS OF MEMBER' in lines[k] or 
                     'LODGER' in lines[k] or 
-                    'PARTICULARS OF LODGER' in lines[k]):
+                    'PARTICULARS OF LODGER' in lines[k] or
+                    'PART C' in lines[k]):  # Part C often contains lodger info
                     section_end = k
                     break
             
             for i in range(section_start + 1, min(section_end, len(lines))):
                 line = lines[i].strip()
+                
+                # Check if we've entered a lodger section by looking backwards and forwards
+                is_in_lodger_section = False
+                
+                # Check backwards for lodger section headers
+                for check_line in range(max(0, i-10), i):
+                    if ('LODGER' in lines[check_line] or 
+                        'PARTICULARS OF LODGER' in lines[check_line] or
+                        'Lodger Information' in lines[check_line]):
+                        is_in_lodger_section = True
+                        break
+                
+                # Also check if the current line or nearby lines contain lodger indicators
+                if not is_in_lodger_section:
+                    # Check current line and next few lines for lodger indicators
+                    for check_line in range(i, min(i+5, len(lines))):
+                        if ('LODGER' in lines[check_line] or 
+                            'PARTICULARS OF LODGER' in lines[check_line] or
+                            'Lodger Information' in lines[check_line]):
+                            is_in_lodger_section = True
+                            break
+                
+                # Skip if we're in a lodger section
+                if is_in_lodger_section:
+                    continue
                 
                 # Extract director name (looks for names with A/L pattern or common Malaysian names)
                 # Exclude certain keywords that are not names
@@ -552,6 +697,17 @@ class OCRService:
                                    'COMPANY REGISTRATION', 'REGISTRATION', 'CHINESE', 'MALAY', 'INDIAN',
                                    'CERTIFI ED COPY', 'CERTIFIED COPY', 'COMPAN SECRETARY', 
                                    'COMPANY SECRETARY', 'COPY', 'SECRETARY', 'LODGER', 'PARTICULARS OF LODGER']
+                
+                # Check if this name appears right after "CERTIFIED TRUE COPY" (rubber stamp section)
+                is_in_stamp_section = False
+                for check_line in range(max(0, i-3), i):
+                    if 'CERTIFIED TRUE COPY' in lines[check_line]:
+                        is_in_stamp_section = True
+                        break
+                
+                # Skip if in stamp section
+                if is_in_stamp_section:
+                    continue
                 
                 if ('A/L' in line or 'A/P' in line or 'BIN' in line or 
                     (re.search(r'^[A-Z][A-Z\s]+$', line) and len(line.split()) >= 2 and 
@@ -570,8 +726,12 @@ class OCRService:
                     for j in range(i + 1, min(i + 15, section_end)):
                         next_line = lines[j].strip()
                         
-                        # Extract ID number (12 digits)
+                        # Extract ID number - multiple formats
+                        # Format 1: 12 digits (existing)
                         if re.match(r'^\d{12}$', next_line) and not director['id_number']:
+                            director['id_number'] = next_line
+                        # Format 2: 6digits-2digits-4digits (YYMMDD-PB-NNNN)
+                        elif re.match(r'^\d{6}-\d{2}-\d{4}$', next_line) and not director['id_number']:
                             director['id_number'] = next_line
                         
                         # Extract email (look for lines containing @ and common TLDs)
@@ -628,7 +788,9 @@ class OCRService:
                         if 'PARTICULARS OF DIRECTOR' in lines[k]:
                             is_in_director_section = True
                             break
-                        elif 'PARTICULARS OF MEMBER' in lines[k]:
+                        elif ('PARTICULARS OF MEMBER' in lines[k] or 
+                              'LODGER' in lines[k] or
+                              'PARTICULARS OF LODGER' in lines[k]):
                             is_in_director_section = False
                             break
                     
@@ -675,7 +837,9 @@ class OCRService:
                             if 'PARTICULARS OF DIRECTOR' in lines[k]:
                                 is_in_director_section = True
                                 break
-                            elif 'PARTICULARS OF MEMBER' in lines[k]:
+                            elif ('PARTICULARS OF MEMBER' in lines[k] or 
+                                  'LODGER' in lines[k] or
+                                  'PARTICULARS OF LODGER' in lines[k]):
                                 is_in_director_section = False
                                 break
                         
@@ -686,7 +850,9 @@ class OCRService:
                                 # Make sure we're still in director section
                                 still_in_director_section = True
                                 for m in range(j, min(len(lines), j+10)):
-                                    if 'PARTICULARS OF MEMBER' in lines[m]:
+                                    if ('PARTICULARS OF MEMBER' in lines[m] or 
+                                        'LODGER' in lines[m] or
+                                        'PARTICULARS OF LODGER' in lines[m]):
                                         still_in_director_section = False
                                         break
                                 
@@ -725,14 +891,14 @@ class OCRService:
             }
             
             if extracted_data:
+                # Update all extracted data fields in the documents table
                 update_data.update({
                     'extracted_company_name': extracted_data.get('company_name'),
                     'extracted_registration_number': extracted_data.get('registration_number'),
+                    'extracted_directors': extracted_data.get('directors', []),  # JSONB array
                     'extracted_incorporation_date': extracted_data.get('incorporation_date'),
                     'extracted_company_type': extracted_data.get('company_type'),
-                    'extracted_business_address': extracted_data.get('business_address'),
-                    'extracted_business_phone': extracted_data.get('business_phone'),
-                    'extracted_directors': extracted_data.get('directors', [])
+                    'extracted_business_address': extracted_data.get('business_address')
                 })
             
             print(f"Updating database for document {document_id} with status {status}")
