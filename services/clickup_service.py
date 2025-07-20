@@ -40,6 +40,8 @@ class ClickUpService:
                 comment_text = self._create_ocr_status_comment(status_value, additional_info)
             elif status_type == 'kyb_status':
                 comment_text = self._create_kyb_status_comment(status_value, additional_info)
+            elif status_type == 'signature_status':
+                comment_text = self._create_signature_status_comment(status_value, additional_info)
             else:
                 comment_text = f"**{status_type.upper()}**: {status_value}"
             
@@ -736,6 +738,70 @@ class ClickUpService:
         section += "\n*Automatically extracted from uploaded documents*"
         
         return section
+    
+    def _create_signature_status_comment(self, status_value, additional_info):
+        \"\"\"Create e-signature status comment\"\"\"
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        status_config = {
+            'sent': {
+                'emoji': '[SENT]',
+                'title': 'E-Signature: Request Sent',
+                'message': 'E-signature request has been sent to directors for review and signing.'
+            },
+            'opened': {
+                'emoji': '[OPENED]',
+                'title': 'E-Signature: Document Opened', 
+                'message': 'E-signature document has been opened by a director.'
+            },
+            'partially_completed': {
+                'emoji': '[PROGRESS]',
+                'title': 'E-Signature: Partially Signed',
+                'message': 'Some directors have signed the document. Waiting for remaining signatures.'
+            },
+            'completed': {
+                'emoji': '[COMPLETED]',
+                'title': 'E-Signature: All Signed',
+                'message': 'All directors have completed the e-signature process! Documents are fully executed.'
+            },
+            'declined': {
+                'emoji': '[DECLINED]',
+                'title': 'E-Signature: Declined',
+                'message': 'E-signature request was declined by a director. Manual review required.'
+            },
+            'canceled': {
+                'emoji': '[CANCELED]',
+                'title': 'E-Signature: Canceled',
+                'message': 'E-signature request was canceled.'
+            }
+        }
+        
+        config = status_config.get(status_value, {
+            'emoji': '[SIGNATURE]',
+            'title': f'E-Signature: {status_value.title()}',
+            'message': f'E-signature status updated to: {status_value}'
+        })
+        
+        comment = f\"\"\"
+{config['emoji']} **{config['title']}**
+
+**Status:** {status_value.upper()}
+**Timestamp:** {timestamp}
+
+{config['message']}
+\"\"\"
+        
+        # Add signature request details if available
+        if additional_info:
+            if additional_info.get('signature_request_id'):
+                comment += f\"\\n**Request ID:** {additional_info['signature_request_id']}\"
+            if additional_info.get('company_name'):
+                comment += f\"\\n**Company:** {additional_info['company_name']}\"
+            if additional_info.get('signers_count'):
+                comment += f\"\\n**Signers:** {additional_info['signers_count']} directors\"
+        
+        comment += \"\\n\\n*Automated update from E-Signature system*\"
+        return comment
 
 
 # Convenience functions for easy import
