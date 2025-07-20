@@ -105,7 +105,8 @@ class DocumensoService:
                         'documentCompleted': True,
                         'documentDeleted': True,
                         'ownerDocumentCompleted': True
-                    }
+                    },
+                    'webhookUrl': os.getenv('WEBHOOK_BASE_URL', 'https://internal-automation-production.up.railway.app') + '/documenso-webhook'
                 },
                 'formValues': {
                     'Company_Name': company_name  # Prefill company name field
@@ -225,11 +226,12 @@ class DocumensoService:
             
             # Map webhook events to our status system
             status_mapping = {
-                'document.created': 'sent',
+                'document.created': 'created',
+                'document.sent': 'sent',
                 'document.opened': 'opened',
                 'document.signed': 'partially_completed',
                 'document.completed': 'completed',
-                'document.declined': 'declined',
+                'document.rejected': 'declined',
                 'document.cancelled': 'canceled'
             }
             
@@ -247,6 +249,10 @@ class DocumensoService:
             }
             
             self._update_clickup_signature_status(clickup_task_id, mapped_status, additional_info)
+            
+            # Also update consent field when document is completed
+            if event_type == 'document.completed':
+                self._update_consent_field_completed(clickup_task_id, additional_info)
             
             print(f"[OK] Webhook processed: {event_type} -> {mapped_status} for task {clickup_task_id}")
             
@@ -404,11 +410,12 @@ class DocumensoService:
             
             # Create status comment for ClickUp
             status_messages = {
+                'created': 'E-signature document has been created',
                 'sent': 'E-signature request has been sent to directors',
                 'opened': 'E-signature document has been opened by a director', 
                 'partially_completed': 'Some directors have signed the document',
                 'completed': 'All directors have completed the e-signature process',
-                'declined': 'E-signature request was declined',
+                'declined': 'E-signature request was declined/rejected',
                 'canceled': 'E-signature request was canceled'
             }
             
@@ -435,6 +442,31 @@ class DocumensoService:
                 
         except Exception as e:
             print(f"ClickUp signature status update error (non-critical): {e}")
+    
+    def _update_consent_field_completed(self, clickup_task_id: str, additional_info: Dict):
+        """Update the Consent & Authorisation field to 'Doc Signed' when document is completed"""
+        try:
+            from .clickup_service import update_clickup_task_status
+            
+            print(f"Updating consent field to 'Doc Signed' for task {clickup_task_id}")
+            
+            result = update_clickup_task_status(
+                task_id=clickup_task_id,
+                status_type='consent_status',
+                status_value='signature_completed',
+                additional_info={
+                    'company_name': additional_info.get('company_name'),
+                    'document_id': additional_info.get('document_id')
+                }
+            )
+            
+            if result.get('success'):
+                print(f"[OK] Consent field updated to 'Doc Signed' for task {clickup_task_id}")
+            else:
+                print(f"[WARNING] Consent field update failed: {result.get('error')}")
+                
+        except Exception as e:
+            print(f"Consent field update error (non-critical): {e}")
 
 
 # Convenience functions for easy import

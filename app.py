@@ -279,13 +279,12 @@ def store_customer_info(customer_data, task_id, token, upload_link):
         # Create companies table record matching the schema
         company_record = {
             'email': customer_data['customer_email'],
-            'customer_name': customer_data['customer_name'],  # Add customer_name field
-            'customer_first_name': customer_data.get('customer_first_name'),  # Add customer_first_name field
+            'customer_name': customer_data['customer_name'],
+            'customer_first_name': customer_data.get('customer_first_name'),
             'phone': customer_data.get('phone'),
             'clickup_task_id': task_id,
             'company_name': customer_data['company_name'],
             'typeform_submission_id': customer_data.get('typeform_response_id'),
-            'customer_token': token,  # Store customer token for ClickUp integration lookups
             'kyb_status': 'pending_documents',
             'kyb_failure_reason': None,
             'first_upload_at': None,
@@ -1046,8 +1045,8 @@ def zapier_webhook():
         # Store customer info in database for tracking
         customer_record = store_customer_info(data, task_id, token, upload_link)
         
-        # Notify ClickUp of initial KYB status (pending_documents)
-        update_company_kyb_status(task_id, 'pending_documents')
+        # Notify ClickUp of initial KYB status (pending_documents) - only if not already set to a more advanced status
+        update_company_kyb_status_safe(task_id, 'pending_documents')
         
         # Send email with upload link
         email_result = send_upload_email(data['customer_email'], data['customer_name'], upload_link, data['company_name'])
@@ -2355,10 +2354,7 @@ def test_email_from_supabase(uuid):
         print(f"Test email error: {e}")
         return jsonify({'error': 'Test email failed', 'details': str(e)}), 500
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f"Starting Flask server on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+# Routes continue below - app.run() moved to end of file
 
 # DOCUMENSO E-SIGNATURE ENDPOINTS
 
@@ -2435,6 +2431,21 @@ def trigger_documenso_signature_route(clickup_task_id):
 def documenso_webhook_route():
     """Handle Documenso webhook events for signature status updates"""
     try:
+        # Verify webhook secret if configured
+        webhook_secret = os.getenv('DOCUMENSO_WEBHOOK_SECRET')
+        if webhook_secret:
+            # Get signature from headers (common webhook patterns)
+            signature = request.headers.get('X-Documenso-Signature') or request.headers.get('X-Signature') or request.headers.get('Authorization')
+            
+            if not signature:
+                print("Warning: No webhook signature found in headers")
+                return jsonify({'error': 'Webhook signature required'}), 401
+            
+            # Simple secret verification (you can enhance this with HMAC if needed)
+            if webhook_secret not in signature:
+                print("Warning: Invalid webhook signature")
+                return jsonify({'error': 'Invalid webhook signature'}), 401
+        
         # Get webhook data
         webhook_data = request.get_json()
         
@@ -2442,6 +2453,7 @@ def documenso_webhook_route():
             return jsonify({'error': 'No webhook data received'}), 400
         
         print(f"Received Documenso webhook: {webhook_data.get('event')}")
+        print(f"Webhook headers: {dict(request.headers)}")
         
         # Process webhook with Documenso service
         from services.documenso_service import handle_documenso_webhook
@@ -2511,3 +2523,269 @@ def test_documenso_trigger_route():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/eSignature_Request/<token>', methods=['POST'])
+def esignature_request(token):
+    """Handle e-signature request from upload page"""
+    try:
+        # Decode customer data from token
+        customer_data = decode_customer_token(token)
+        clickup_task_id = customer_data.get('taskId')
+        
+        # Get request data
+        data = request.get_json()
+        selected_director_index = data.get('selectedDirector', 0)
+        
+        if not clickup_task_id:
+            return jsonify({'error': 'Invalid token or missing task ID'}), 400
+        
+        # Get company data from Supabase
+        if not supabase:
+            return jsonify({'error': 'Database not configured'}), 500
+        
+        response = supabase.table('companies').select('*').eq('clickup_task_id', clickup_task_id).execute()
+        if not response.data:
+            return jsonify({'error': 'Company not found'}), 404
+        
+        company = response.data[0]
+        company_name = company.get('company_name', 'Unknown Company')
+        
+        # Get directors from documents table and use the selected index from frontend
+        doc_response = supabase.table('documents').select('id, extracted_directors').eq('clickup_task_id', clickup_task_id).order('created_at', desc=True).limit(1).execute()
+        if not doc_response.data:
+            return jsonify({'error': 'No documents found for this task'}), 404
+        
+        document = doc_response.data[0]
+        directors_data = document.get('extracted_directors', [])
+        
+        if not directors_data or len(directors_data) == 0:
+            return jsonify({'error': 'No directors found for this company'}), 400
+        
+        # Get selected director using the index from frontend
+        try:
+            selected_director_index = int(selected_director_index)
+            if selected_director_index >= len(directors_data):
+                selected_director_index = 0
+        except (ValueError, TypeError):
+            selected_director_index = 0
+        
+        selected_director = directors_data[selected_director_index]
+        
+        # Store the selection in the database for audit trail
+        updated_directors = directors_data.copy()
+        for i, director in enumerate(updated_directors):
+            director['selected'] = (i == selected_director_index)
+        
+        supabase.table('documents').update({
+            'extracted_directors': updated_directors
+        }).eq('id', document['id']).execute()
+        director_email = selected_director.get('email', '')
+        director_name = selected_director.get('name', 'Unknown Director')
+        
+        # 1. Update ClickUp Consent & Authorisation field to "Pending Signature"
+        from services.clickup_service import update_clickup_task_status
+        
+        consent_result = update_clickup_task_status(
+            task_id=clickup_task_id,
+            status_type='consent_status',
+            status_value='pending_signature',
+            additional_info={
+                'director_name': director_name,
+                'director_email': director_email,
+                'company_name': company_name
+            }
+        )
+        
+        if not consent_result.get('success'):
+            print(f"Warning: Failed to update consent status: {consent_result.get('error')}")
+        
+        # 2. Also send the original comment to ClickUp for additional context
+        from services.clickup_service import ClickUpService
+        clickup_service = ClickUpService()
+        
+        comment_text = f"""
+[APPROVAL] **E-Signature Request Initiated**
+
+**Company:** {company_name}
+**Selected Director:** {director_name}
+**Director Email:** {director_email}
+**Timestamp:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+E-signature request has been sent to the selected director for account activation approval.
+
+*Automated update from KYB system*
+"""
+        
+        clickup_result = clickup_service._add_comment_to_task(clickup_task_id, comment_text)
+        if not clickup_result.get('success'):
+            print(f"Warning: Failed to add ClickUp comment: {clickup_result.get('error')}")
+        
+        # 3. Send request via Documenso
+        from services.documenso_service import DocumensoService
+        documenso_service = DocumensoService(supabase_client=supabase)
+        
+        # Create signature request with the selected director
+        signature_result = documenso_service.create_signature_request(
+            directors_data=[selected_director],  # Only send to selected director
+            clickup_task_id=clickup_task_id,
+            company_name=company_name
+        )
+        
+        if signature_result.get('success'):
+            return jsonify({
+                'success': True,
+                'message': f'E-signature request sent to {director_name}. Please check your email from Documenso and sign as soon as possible.',
+                'director_name': director_name,
+                'director_email': director_email,
+                'document_id': signature_result.get('document_id')
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to send e-signature request: {signature_result.get("error")}'
+            }), 500
+        
+    except Exception as e:
+        print(f"E-signature request error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sendComment/<token>', methods=['POST'])
+def send_comment(token):
+    """Handle comment submission from upload page"""
+    try:
+        # Decode customer data from token
+        customer_data = decode_customer_token(token)
+        clickup_task_id = customer_data.get('taskId')
+        customer_email = customer_data.get('email', 'Unknown Customer')
+        
+        # Get request data
+        data = request.get_json()
+        comment = data.get('comment', '').strip()
+        
+        if not clickup_task_id:
+            return jsonify({'error': 'Invalid token or missing task ID'}), 400
+        
+        if not comment:
+            return jsonify({'error': 'Comment cannot be empty'}), 400
+        
+        # Get company data from Supabase for context
+        company_name = 'Unknown Company'
+        if supabase:
+            try:
+                response = supabase.table('companies').select('company_name').eq('clickup_task_id', clickup_task_id).execute()
+                if response.data:
+                    company_name = response.data[0].get('company_name', 'Unknown Company')
+            except Exception as e:
+                print(f"Warning: Could not fetch company name: {e}")
+        
+        # Send comment to ClickUp
+        from services.clickup_service import ClickUpService
+        clickup_service = ClickUpService()
+        
+        comment_text = f"""
+[CUSTOMER FEEDBACK] **Information Correction Request**
+
+**Company:** {company_name}
+**Customer Email:** {customer_email}
+**Timestamp:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**Customer Comment:**
+"{comment}"
+
+**Action Required:** Customer has indicated information is incorrect and needs assistance from our team. Please review the extracted data and contact the customer if needed.
+
+*Automated update from KYB system*
+"""
+        
+        clickup_result = clickup_service._add_comment_to_task(clickup_task_id, comment_text)
+        
+        if clickup_result.get('success'):
+            return jsonify({
+                'success': True,
+                'message': 'Comment sent successfully! Our team will review and get back to you.'
+            })
+        else:
+            print(f"ClickUp comment failed: {clickup_result.get('error')}")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to send comment. Please try again or contact support.'
+            }), 500
+        
+    except Exception as e:
+        print(f"Send comment error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/test-new-route')
+def test_new_route():
+    """Simple test route to verify Flask is loading new routes"""
+    return jsonify({'message': 'New route works!', 'success': True})
+
+
+@app.route('/storeSelectedDirector/<token>', methods=['POST'])
+def store_selected_director(token):
+    """Store the selected director in documents table"""
+    try:
+        # Decode customer data from token
+        customer_data = decode_customer_token(token)
+        clickup_task_id = customer_data.get('taskId')
+        
+        # Get request data
+        data = request.get_json()
+        selected_director_index = data.get('selectedDirectorIndex', 0)
+        
+        if not clickup_task_id:
+            return jsonify({'error': 'Invalid token or missing task ID'}), 400
+        
+        # Get the latest document for this task
+        if not supabase:
+            return jsonify({'error': 'Database not configured'}), 500
+        
+        doc_response = supabase.table('documents').select('id, extracted_directors').eq('clickup_task_id', clickup_task_id).order('created_at', desc=True).limit(1).execute()
+        if not doc_response.data:
+            return jsonify({'error': 'No documents found for this task'}), 404
+        
+        document = doc_response.data[0]
+        directors_data = document.get('extracted_directors', [])
+        
+        if not directors_data or len(directors_data) == 0:
+            return jsonify({'error': 'No directors found in document'}), 400
+        
+        # Get selected director
+        try:
+            selected_director_index = int(selected_director_index)
+            if selected_director_index >= len(directors_data):
+                selected_director_index = 0
+        except (ValueError, TypeError):
+            selected_director_index = 0
+        
+        selected_director = directors_data[selected_director_index]
+        
+        # Store selected director by adding a 'selected' flag to the extracted_directors JSONB
+        updated_directors = directors_data.copy()
+        for i, director in enumerate(updated_directors):
+            director['selected'] = (i == selected_director_index)
+        
+        update_result = supabase.table('documents').update({
+            'extracted_directors': updated_directors
+        }).eq('id', document['id']).execute()
+        
+        if update_result.data:
+            return jsonify({
+                'success': True,
+                'message': 'Selected director stored successfully',
+                'selected_director': selected_director
+            })
+        else:
+            return jsonify({'error': 'Failed to store selected director'}), 500
+        
+    except Exception as e:
+        print(f"Store selected director error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    print(f"Starting Flask server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=True)

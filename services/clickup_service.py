@@ -42,6 +42,8 @@ class ClickUpService:
                 comment_text = self._create_kyb_status_comment(status_value, additional_info)
             elif status_type == 'signature_status':
                 comment_text = self._create_signature_status_comment(status_value, additional_info)
+            elif status_type == 'consent_status':
+                comment_text = self._create_consent_status_comment(status_value, additional_info)
             else:
                 comment_text = f"**{status_type.upper()}**: {status_value}"
             
@@ -217,7 +219,14 @@ class ClickUpService:
             field_id = None
             
             # Find the correct custom field based on status type
-            field_name = "OCR Status" if status_type == 'ocr_status' else "KYB Status"
+            if status_type == 'ocr_status':
+                field_name = "OCR Status"
+            elif status_type == 'kyb_status':
+                field_name = "KYB Status"
+            elif status_type == 'consent_status':
+                field_name = "✍️ Consent & Authorisation "
+            else:
+                field_name = status_type  # Fallback to the status_type itself
             
             for field in custom_fields:
                 if field.get('name', '').lower() in [field_name.lower(), status_type.lower()]:
@@ -288,7 +297,13 @@ class ClickUpService:
                 'pending_documents': 'pending documents',
                 'documents_pending_review': 'documents pending review',
                 'kyb_completed': 'Completed',
-                'kyb_failed': 'Failed'
+                'kyb_failed': 'Failed',
+                
+                # Consent & Authorisation mappings
+                'pending_dir_details': 'Pending Dir Details',
+                'pending_signature': 'Pending Signature',
+                'signature_completed': 'Doc Signed',
+                'signature_failed': 'Failed'
             }
             
             # Get the ClickUp dropdown name for our status
@@ -740,7 +755,7 @@ class ClickUpService:
         return section
     
     def _create_signature_status_comment(self, status_value, additional_info):
-        \"\"\"Create e-signature status comment\"\"\"
+        """Create e-signature status comment"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         status_config = {
@@ -782,25 +797,79 @@ class ClickUpService:
             'message': f'E-signature status updated to: {status_value}'
         })
         
-        comment = f\"\"\"
+        comment = f"""
 {config['emoji']} **{config['title']}**
 
 **Status:** {status_value.upper()}
 **Timestamp:** {timestamp}
 
 {config['message']}
-\"\"\"
+"""
         
         # Add signature request details if available
         if additional_info:
             if additional_info.get('signature_request_id'):
-                comment += f\"\\n**Request ID:** {additional_info['signature_request_id']}\"
+                comment += f"\n**Request ID:** {additional_info['signature_request_id']}"
             if additional_info.get('company_name'):
-                comment += f\"\\n**Company:** {additional_info['company_name']}\"
+                comment += f"\n**Company:** {additional_info['company_name']}"
             if additional_info.get('signers_count'):
-                comment += f\"\\n**Signers:** {additional_info['signers_count']} directors\"
+                comment += f"\n**Signers:** {additional_info['signers_count']} directors"
         
-        comment += \"\\n\\n*Automated update from E-Signature system*\"
+        comment += "\n\n*Automated update from E-Signature system*"
+        return comment
+    
+    def _create_consent_status_comment(self, status_value, additional_info):
+        """Create consent & authorisation status comment"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        status_config = {
+            'pending_dir_details': {
+                'emoji': '[PENDING]',
+                'title': 'Consent: Awaiting Director Details',
+                'message': 'Waiting for director information to be extracted and processed.'
+            },
+            'pending_signature': {
+                'emoji': '[SIGNATURE]',
+                'title': 'Consent: E-Signature Required',
+                'message': 'Director details processed. E-signature request has been sent to the selected director.'
+            },
+            'signature_completed': {
+                'emoji': '[SIGNED]',
+                'title': 'Consent: Director Signed',
+                'message': 'Director has successfully signed the consent and authorisation documents.'
+            },
+            'signature_failed': {
+                'emoji': '[FAILED]',
+                'title': 'Consent: Signature Failed',
+                'message': 'E-signature process failed or was declined. Manual review required.'
+            }
+        }
+        
+        config = status_config.get(status_value, {
+            'emoji': '[CONSENT]',
+            'title': f'Consent: {status_value.title()}',
+            'message': f'Consent & authorisation status updated to: {status_value}'
+        })
+        
+        comment = f"""
+{config['emoji']} **{config['title']}**
+
+**Status:** {status_value.upper()}
+**Timestamp:** {timestamp}
+
+{config['message']}
+"""
+        
+        # Add additional details if available
+        if additional_info:
+            if additional_info.get('director_name'):
+                comment += f"\n**Director:** {additional_info['director_name']}"
+            if additional_info.get('director_email'):
+                comment += f"\n**Email:** {additional_info['director_email']}"
+            if additional_info.get('company_name'):
+                comment += f"\n**Company:** {additional_info['company_name']}"
+        
+        comment += "\n\n*Automated update from Consent & Authorisation system*"
         return comment
 
 
