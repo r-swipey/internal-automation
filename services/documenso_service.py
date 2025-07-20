@@ -89,8 +89,8 @@ class DocumensoService:
                 'recipients': recipients,
                 'externalId': clickup_task_id,
                 'meta': {
-                    'subject': f'KYB Document Signature Required - {company_name}',
-                    'message': f'Please review and sign the KYB documents for {company_name}.',
+                    'subject': 'Swipey Account Setup | Signature Required to Activate Account',
+                    'message': f'Hi {{signer.name}},\n\nWe\'re setting up your Swipey account and need your digital signature to complete the process.\n\nPlease review and sign the account setup documents for {company_name}.\nThis will only take a minute and helps us verify your identity for account security.\n\nBest regards,\nThe Swipey Onboarding Team',
                     'redirectUrl': 'https://app.documenso.com/documents',
                     'timezone': 'Asia/Kuala_Lumpur',
                     'dateFormat': 'dd/MM/yyyy hh:mm a',

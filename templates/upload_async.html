@@ -250,18 +250,124 @@
             font-weight: 600;
         }
         
-        .extraction-item {
-            margin: 8px 0;
-            padding: 12px 15px;
-            background: rgba(255, 255, 255, 0.8);
-            border-radius: 6px;
-            border-left: 3px solid #27d8b2;
+        .company-info-box {
+            margin: 15px 0;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            border-left: 4px solid #27d8b2;
             color: #002940;
         }
         
-        .extraction-item strong {
+        .company-info-box h5 {
             color: #002940;
             font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        .company-detail {
+            margin: 8px 0;
+            color: #002940;
+            line-height: 1.4;
+        }
+        
+        .company-detail strong {
+            color: #002940;
+            font-weight: 600;
+            min-width: 140px;
+            display: inline-block;
+        }
+        
+        .directors-section {
+            margin: 20px 0;
+        }
+        
+        .directors-section h5 {
+            color: #002940;
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        .director-box {
+            margin: 12px 0;
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            border-left: 4px solid #27d8b2;
+            color: #002940;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .director-box:hover {
+            background: rgba(39, 216, 178, 0.05);
+            transform: translateY(-1px);
+        }
+        
+        .director-box.selected {
+            background: rgba(39, 216, 178, 0.1);
+            border-left-color: #1fc4a0;
+        }
+        
+        .director-radio {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .director-info {
+            margin-right: 40px;
+        }
+        
+        .director-name {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: #002940;
+        }
+        
+        .director-details {
+            font-size: 14px;
+            color: #305063;
+            line-height: 1.4;
+        }
+        
+        .approval-section {
+            margin: 30px 0 20px 0;
+            text-align: center;
+        }
+        
+        .request-approval-btn {
+            background: linear-gradient(135deg, #27d8b2 0%, #8ce4d1 100%);
+            color: #FFFFFF;
+            padding: 16px 32px;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: 'Quicksand', sans-serif;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(39, 216, 178, 0.3);
+            min-width: 200px;
+        }
+        
+        .request-approval-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(39, 216, 178, 0.4);
+        }
+        
+        .request-approval-btn:disabled {
+            background: linear-gradient(135deg, #778c98 0%, #b4b4b4 100%);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
         
         /* Mobile Responsive */
@@ -439,37 +545,140 @@
         function showExtractionPreview(data) {
             let html = '<h4>📋 Extracted Information:</h4>';
             
+            // Company Information Box
+            html += '<div class="company-info-box">';
+            html += '<h5>🏢 Company Information</h5>';
+            
             if (data.company_name) {
-                html += `<div class="extraction-item"><strong>🏢 Company:</strong> ${data.company_name}</div>`;
+                html += `<div class="company-detail"><strong>Company:</strong> ${data.company_name}</div>`;
             }
             if (data.registration_number) {
-                html += `<div class="extraction-item"><strong>📋 Registration:</strong> ${data.registration_number}</div>`;
+                html += `<div class="company-detail"><strong>Registration:</strong> ${data.registration_number}</div>`;
             }
             if (data.incorporation_date) {
-                html += `<div class="extraction-item"><strong>📅 Incorporation Date:</strong> ${data.incorporation_date}</div>`;
+                html += `<div class="company-detail"><strong>Incorporation Date:</strong> ${data.incorporation_date}</div>`;
             }
             if (data.company_type) {
-                html += `<div class="extraction-item"><strong>🏢 Type:</strong> ${data.company_type}</div>`;
+                html += `<div class="company-detail"><strong>Type:</strong> ${data.company_type}</div>`;
             }
             if (data.business_address) {
-                html += `<div class="extraction-item"><strong>📍 Address:</strong> ${data.business_address}</div>`;
+                html += `<div class="company-detail"><strong>Address:</strong> ${data.business_address}</div>`;
             }
             if (data.business_phone) {
-                html += `<div class="extraction-item"><strong>📞 Phone:</strong> ${data.business_phone}</div>`;
+                html += `<div class="company-detail"><strong>Phone:</strong> ${data.business_phone}</div>`;
             }
+            
+            html += '</div>';
+            
+            // Directors Section
             if (data.directors && data.directors.length > 0) {
-                html += `<div class="extraction-item"><strong>👥 Directors:</strong><br>`;
-                data.directors.forEach(director => {
-                    html += `<div style="margin-left: 20px;">• ${director.name || 'Unknown'}`;
-                    if (director.id_number) html += ` (${director.id_number})`;
-                    if (director.email) html += ` - ${director.email}`;
-                    html += `</div>`;
+                html += '<div class="directors-section">';
+                
+                // Dynamic header based on number of directors
+                if (data.directors.length > 1) {
+                    html += '<h5>👥 Directors: Need approval to activate Swipey account from a director. Select a director that will receive e-signature request</h5>';
+                } else {
+                    html += '<h5>👥 Director: Need approval to activate account. Click "Request Approval" from listed director</h5>';
+                }
+                
+                data.directors.forEach((director, index) => {
+                    const directorId = `director_${index}`;
+                    html += `<div class="director-box" onclick="selectDirector('${directorId}')">`;
+                    
+                    // Always show radio button for consistency
+                    html += `<input type="radio" name="selectedDirector" class="director-radio" id="${directorId}" value="${index}">`;
+                    
+                    html += '<div class="director-info">';
+                    html += `<div class="director-name">${director.name || 'Unknown Director'}</div>`;
+                    html += '<div class="director-details">';
+                    
+                    if (director.id_number) {
+                        html += `ID: ${director.id_number}<br>`;
+                    }
+                    if (director.email) {
+                        html += `Email: ${director.email}<br>`;
+                    }
+                    if (director.nationality) {
+                        html += `Nationality: ${director.nationality}<br>`;
+                    }
+                    if (director.shares) {
+                        html += `Shares: ${director.shares}`;
+                    }
+                    
+                    html += '</div>';
+                    html += '</div>';
+                    html += '</div>';
                 });
-                html += `</div>`;
+                
+                html += '</div>';
             }
+            
+            // Approval Section
+            html += '<div class="approval-section">';
+            html += '<button type="button" class="request-approval-btn" onclick="requestApproval()">📝 Request Approval</button>';
+            html += '</div>';
             
             extractionPreview.innerHTML = html;
             extractionPreview.style.display = 'block';
+            
+            // Auto-select first director by default (for both single and multiple directors)
+            if (data.directors && data.directors.length > 0) {
+                setTimeout(() => {
+                    selectDirector('director_0');
+                }, 100); // Small delay to ensure DOM is ready
+            }
+        }
+        
+        function selectDirector(directorId) {
+            // Remove selected class from all director boxes
+            document.querySelectorAll('.director-box').forEach(box => {
+                box.classList.remove('selected');
+            });
+            
+            // Add selected class to clicked box
+            const directorBox = document.querySelector(`#${directorId}`);
+            if (directorBox) {
+                const parentBox = directorBox.closest('.director-box');
+                if (parentBox) {
+                    parentBox.classList.add('selected');
+                }
+                // Check the radio button
+                directorBox.checked = true;
+            } else {
+                // For single director case (no radio button), just highlight the box
+                const singleDirectorBox = document.querySelector('.director-box');
+                if (singleDirectorBox) {
+                    singleDirectorBox.classList.add('selected');
+                }
+            }
+        }
+        
+        function requestApproval() {
+            // Get selected director (if multiple)
+            const selectedDirector = document.querySelector('input[name="selectedDirector"]:checked');
+            const directorIndex = selectedDirector ? selectedDirector.value : 0;
+            
+            // Get selected director info for confirmation
+            const directorBoxes = document.querySelectorAll('.director-box');
+            const selectedBox = document.querySelector('.director-box.selected');
+            
+            if (!selectedBox && directorBoxes.length > 1) {
+                alert('Please select a director first.');
+                return;
+            }
+            
+            // Get director name for confirmation
+            const directorNameElement = selectedBox ? selectedBox.querySelector('.director-name') : null;
+            const directorName = directorNameElement ? directorNameElement.textContent : `Director ${parseInt(directorIndex) + 1}`;
+            
+            // Confirmation dialog
+            if (confirm(`Send e-signature request to ${directorName}?\n\nThis will trigger the account activation process.`)) {
+                // Here you can add logic to handle the approval request
+                alert(`E-signature request sent to ${directorName}. They will receive an email to complete the approval process.`);
+                
+                // TODO: Add actual approval request logic here
+                // This could trigger the Documenso e-signature process
+            }
         }
     </script>
 </body>
