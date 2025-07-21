@@ -301,9 +301,11 @@ class ClickUpService:
                 
                 # Consent & Authorisation mappings
                 'pending_dir_details': 'Pending Dir Details',
-                'pending_signature': 'Pending Signature',
-                'signature_completed': 'Doc Signed',
-                'signature_failed': 'Failed'
+                # Documenso webhook state mappings
+                'sent': 'SENT',
+                'opened': 'OPENED', 
+                'completed': 'COMPLETED',
+                'declined': 'Rejected'
             }
             
             # Get the ClickUp dropdown name for our status

@@ -206,26 +206,35 @@ class DocumensoService:
         """
         try:
             event_type = webhook_data.get('event')
-            document_data = webhook_data.get('data', {})
-            document_id = document_data.get('id')
+            payload_data = webhook_data.get('payload', {})
+            
+            # Documenso uses payload.id for document ID according to official docs
+            document_id = payload_data.get('id')
+            external_id = payload_data.get('externalId')  # This is our ClickUp task ID
             
             if not document_id:
-                print("Warning: No document ID in webhook data")
+                print("Warning: No document ID found in webhook payload")
                 return {'success': False, 'error': 'No document ID'}
             
             print(f"Processing Documenso webhook: {event_type} for document {document_id}")
             
-            # Get stored signature request info
-            stored_request = self._get_signature_request(document_id)
-            if not stored_request:
-                print(f"Warning: Signature request {document_id} not found in database")
-                return {'success': False, 'error': 'Signature request not found'}
+            # Use external_id from Documenso payload (this is the ClickUp task ID)
+            clickup_task_id = external_id
+            company_name = payload_data.get('formValues', {}).get('Company_Name', 'Unknown Company')
             
-            clickup_task_id = stored_request.get('clickup_task_id')
-            company_name = stored_request.get('company_name')
+            # Try to get from database for additional info, but don't fail if not found
+            stored_request = self._get_signature_request(str(document_id)) if document_id else None
             
-            # Map webhook events to our status system
+            # Map webhook events to our status system (Documenso uses UPPERCASE format)
             status_mapping = {
+                'DOCUMENT_CREATED': 'created',
+                'DOCUMENT_SENT': 'sent', 
+                'DOCUMENT_OPENED': 'opened',
+                'DOCUMENT_SIGNED': 'partially_completed',
+                'DOCUMENT_COMPLETED': 'completed',
+                'DOCUMENT_REJECTED': 'declined',
+                'DOCUMENT_CANCELLED': 'canceled',
+                # Keep old lowercase format for backwards compatibility
                 'document.created': 'created',
                 'document.sent': 'sent',
                 'document.opened': 'opened',
@@ -250,9 +259,10 @@ class DocumensoService:
             
             self._update_clickup_signature_status(clickup_task_id, mapped_status, additional_info)
             
-            # Also update consent field when document is completed
-            if event_type == 'document.completed':
-                self._update_consent_field_completed(clickup_task_id, additional_info)
+            # Update Consent & Authorisation custom field for relevant Documenso states
+            if mapped_status in ['sent', 'opened', 'completed', 'declined']:
+                print(f"Updating Consent & Authorisation field to: {mapped_status}")
+                self._update_consent_field(clickup_task_id, mapped_status, additional_info)
             
             print(f"[OK] Webhook processed: {event_type} -> {mapped_status} for task {clickup_task_id}")
             
@@ -443,25 +453,26 @@ class DocumensoService:
         except Exception as e:
             print(f"ClickUp signature status update error (non-critical): {e}")
     
-    def _update_consent_field_completed(self, clickup_task_id: str, additional_info: Dict):
-        """Update the Consent & Authorisation field to 'Doc Signed' when document is completed"""
+    def _update_consent_field(self, clickup_task_id: str, consent_status: str, additional_info: Dict):
+        """Update the Consent & Authorisation custom field based on Documenso webhook state"""
         try:
             from .clickup_service import update_clickup_task_status
             
-            print(f"Updating consent field to 'Doc Signed' for task {clickup_task_id}")
+            print(f"Updating Consent & Authorisation field to '{consent_status}' for task {clickup_task_id}")
             
             result = update_clickup_task_status(
                 task_id=clickup_task_id,
                 status_type='consent_status',
-                status_value='signature_completed',
+                status_value=consent_status,
                 additional_info={
                     'company_name': additional_info.get('company_name'),
-                    'document_id': additional_info.get('document_id')
+                    'document_id': additional_info.get('document_id'),
+                    'event_type': additional_info.get('event_type')
                 }
             )
             
             if result.get('success'):
-                print(f"[OK] Consent field updated to 'Doc Signed' for task {clickup_task_id}")
+                print(f"[OK] Consent & Authorisation field updated to '{consent_status}' for task {clickup_task_id}")
             else:
                 print(f"[WARNING] Consent field update failed: {result.get('error')}")
                 

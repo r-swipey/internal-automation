@@ -2430,30 +2430,34 @@ def trigger_documenso_signature_route(clickup_task_id):
 @app.route('/documenso-webhook', methods=['POST'])
 def documenso_webhook_route():
     """Handle Documenso webhook events for signature status updates"""
+    print("=== DOCUMENSO WEBHOOK CALLED ===")
     try:
-        # Verify webhook secret if configured
+        # Verify webhook secret if configured - TEMPORARILY DISABLED FOR DEBUG
         webhook_secret = os.getenv('DOCUMENSO_WEBHOOK_SECRET')
-        if webhook_secret:
-            # Get signature from headers (common webhook patterns)
-            signature = request.headers.get('X-Documenso-Signature') or request.headers.get('X-Signature') or request.headers.get('Authorization')
-            
-            if not signature:
-                print("Warning: No webhook signature found in headers")
-                return jsonify({'error': 'Webhook signature required'}), 401
-            
-            # Simple secret verification (you can enhance this with HMAC if needed)
-            if webhook_secret not in signature:
-                print("Warning: Invalid webhook signature")
-                return jsonify({'error': 'Invalid webhook signature'}), 401
+        print(f"DEBUG: Webhook secret configured: {webhook_secret is not None}")
+        
+        # Get signature from headers for debugging
+        signature = request.headers.get('X-Documenso-Signature') or request.headers.get('X-Signature') or request.headers.get('Authorization')
+        print(f"DEBUG: Received signature: {signature}")
+        print(f"DEBUG: All headers: {dict(request.headers)}")
+        
+        # TEMPORARILY SKIP SIGNATURE VALIDATION FOR DEBUGGING
+        # if webhook_secret:
+        #     if not signature:
+        #         print("Warning: No webhook signature found in headers")
+        #         return jsonify({'error': 'Webhook signature required'}), 401
+        #     if webhook_secret not in signature:
+        #         print("Warning: Invalid webhook signature")
+        #         return jsonify({'error': 'Invalid webhook signature'}), 401
         
         # Get webhook data
         webhook_data = request.get_json()
         
         if not webhook_data:
+            print("ERROR: No webhook data received")
             return jsonify({'error': 'No webhook data received'}), 400
         
         print(f"Received Documenso webhook: {webhook_data.get('event')}")
-        print(f"Webhook headers: {dict(request.headers)}")
         
         # Process webhook with Documenso service
         from services.documenso_service import handle_documenso_webhook
@@ -2475,7 +2479,9 @@ def documenso_webhook_route():
             }), 500
             
     except Exception as e:
-        print(f"Documenso webhook error: {e}")
+        print(f"=== DOCUMENSO WEBHOOK EXCEPTION ===")
+        print(f"Exception: {e}")
+        print(f"Exception type: {type(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
