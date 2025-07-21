@@ -1046,7 +1046,7 @@ def zapier_webhook():
         customer_record = store_customer_info(data, task_id, token, upload_link)
         
         # Notify ClickUp of initial KYB status (pending_documents) - only if not already set to a more advanced status
-        update_company_kyb_status_safe(task_id, 'pending_documents')
+        update_company_kyb_status(task_id, 'pending_documents')
         
         # Send email with upload link
         email_result = send_upload_email(data['customer_email'], data['customer_name'], upload_link, data['company_name'])

@@ -370,6 +370,66 @@
             box-shadow: none;
         }
         
+        .send-comment-btn {
+            background: linear-gradient(135deg, #ffa726 0%, #ffcc80 100%);
+            color: #FFFFFF;
+            padding: 16px 32px;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: 'Quicksand', sans-serif;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255, 167, 38, 0.3);
+            min-width: 200px;
+            margin-left: 15px;
+        }
+        
+        .send-comment-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 167, 38, 0.4);
+        }
+        
+        .send-comment-btn:disabled {
+            background: linear-gradient(135deg, #778c98 0%, #b4b4b4 100%);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .comment-section {
+            margin: 30px 0 20px 0;
+            text-align: center;
+            border-top: 2px solid #e0e0e0;
+            padding-top: 30px;
+        }
+        
+        .comment-copy {
+            font-size: 16px;
+            color: #555;
+            margin-bottom: 20px;
+            font-family: 'Quicksand', sans-serif;
+        }
+        
+        .comment-input {
+            width: 80%;
+            max-width: 500px;
+            padding: 12px 16px;
+            border: 2px solid #ddd;
+            border-radius: 25px;
+            font-size: 14px;
+            font-family: 'Quicksand', sans-serif;
+            margin-bottom: 20px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+        
+        .comment-input:focus {
+            border-color: #ffa726;
+            box-shadow: 0 0 10px rgba(255, 167, 38, 0.2);
+        }
+        
         /* Mobile Responsive */
         @media (max-width: 600px) {
             .container {
@@ -618,6 +678,14 @@
             html += '<button type="button" class="request-approval-btn" onclick="requestApproval()">📝 Request Approval</button>';
             html += '</div>';
             
+            // Comment Section
+            html += '<div class="comment-section">';
+            html += '<div class="comment-copy">Information incorrect and need help from our rockstar team, click below</div>';
+            html += '<input type="text" class="comment-input" id="commentInput" placeholder="Enter your comment or question here..." maxlength="500">';
+            html += '<br>';
+            html += '<button type="button" class="send-comment-btn" onclick="sendComment()">💬 Send Comment</button>';
+            html += '</div>';
+            
             extractionPreview.innerHTML = html;
             extractionPreview.style.display = 'block';
             
@@ -654,13 +722,20 @@
         }
         
         function requestApproval() {
+            console.log('requestApproval() called');
+            
             // Get selected director (if multiple)
             const selectedDirector = document.querySelector('input[name="selectedDirector"]:checked');
             const directorIndex = selectedDirector ? selectedDirector.value : 0;
             
+            console.log('Selected director index:', directorIndex);
+            
             // Get selected director info for confirmation
             const directorBoxes = document.querySelectorAll('.director-box');
             const selectedBox = document.querySelector('.director-box.selected');
+            
+            console.log('Director boxes found:', directorBoxes.length);
+            console.log('Selected box:', selectedBox);
             
             if (!selectedBox && directorBoxes.length > 1) {
                 alert('Please select a director first.');
@@ -671,14 +746,108 @@
             const directorNameElement = selectedBox ? selectedBox.querySelector('.director-name') : null;
             const directorName = directorNameElement ? directorNameElement.textContent : `Director ${parseInt(directorIndex) + 1}`;
             
+            console.log('Director name:', directorName);
+            
             // Confirmation dialog
             if (confirm(`Send e-signature request to ${directorName}?\n\nThis will trigger the account activation process.`)) {
-                // Here you can add logic to handle the approval request
-                alert(`E-signature request sent to ${directorName}. They will receive an email to complete the approval process.`);
+                console.log('User confirmed, proceeding with request');
+                // Show loading state
+                const button = document.querySelector('.request-approval-btn');
+                const originalText = button.textContent;
                 
-                // TODO: Add actual approval request logic here
-                // This could trigger the Documenso e-signature process
+                // Prevent multiple clicks
+                if (button.disabled) {
+                    console.log('Button already disabled, ignoring click');
+                    return;
+                }
+                
+                button.textContent = '⏳ Sending...';
+                button.disabled = true;
+                
+                // Send request to our eSignature_Request route with selected director index
+                console.log('Making fetch request to:', `/eSignature_Request/{{ token }}`);
+                console.log('Request body:', {selectedDirector: directorIndex});
+                
+                fetch(`/eSignature_Request/{{ token }}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        selectedDirector: directorIndex
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`✅ ${data.message}`);
+                        // Optionally disable the button after successful request
+                        button.textContent = '✅ Request Sent';
+                        button.style.backgroundColor = '#28a745';
+                    } else {
+                        alert(`❌ Error: ${data.error}`);
+                        // Reset button on error
+                        button.textContent = originalText;
+                        button.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('❌ Failed to send e-signature request. Please try again.');
+                    // Reset button on error
+                    button.textContent = originalText;
+                    button.disabled = false;
+                });
             }
+        }
+        
+        function sendComment() {
+            const commentInput = document.getElementById('commentInput');
+            const comment = commentInput.value.trim();
+            
+            if (!comment) {
+                alert('Please enter a comment before sending.');
+                commentInput.focus();
+                return;
+            }
+            
+            // Show loading state
+            const button = document.querySelector('.send-comment-btn');
+            const originalText = button.textContent;
+            button.textContent = '⏳ Sending...';
+            button.disabled = true;
+            
+            // Send comment to backend
+            fetch(`/sendComment/{{ token }}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    comment: comment
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Comment sent successfully! Our team will review and get back to you.');
+                    commentInput.value = ''; // Clear the input
+                    button.textContent = '✅ Comment Sent';
+                    button.style.backgroundColor = '#28a745';
+                } else {
+                    alert(`❌ Error: ${data.error}`);
+                    // Reset button on error
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('❌ Failed to send comment. Please try again.');
+                // Reset button on error
+                button.textContent = originalText;
+                button.disabled = false;
+            });
         }
     </script>
 </body>

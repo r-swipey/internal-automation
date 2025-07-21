@@ -1,0 +1,33 @@
+{
+  "id": "181dfd22-f0a2-42bb-b5f6-b78f7805eb0a",
+  "name": "✍️ Consent & Authorisation ",
+  "type": "drop_down",
+  "type_config": {
+    "sorting": "manual",
+    "options": [
+      {
+        "id": "06e4107c-af4d-463f-95d6-78c958c77330",
+        "name": "Pending Dir Details",
+        "color": "#667684",
+        "orderindex": 0
+      },
+      {
+        "id": "6314002b-bc1f-4292-9843-cf5d3da32229",
+        "name": "Pending Signature",
+        "color": "#f9d900",
+        "orderindex": 1
+      },
+      {
+        "id": "e33718fa-ef58-4cbc-8978-4b274c8c1617",
+        "name": "Doc Signed",
+        "color": "#2ecd6f",
+        "orderindex": 2
+      }
+    ]
+  },
+  "date_created": "1752949119947",
+  "hide_from_guests": false,
+  "value": 0,
+  "value_richtext": null,
+  "required": false
+}

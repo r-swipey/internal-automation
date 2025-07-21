@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_clickup_attachment.py:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}
