@@ -23,8 +23,51 @@ class DocumensoService:
             'Content-Type': 'application/json'
         }
     
+    def get_template_fields_and_recipients(self, template_id: str) -> Dict:
+        """Get template field IDs and recipient IDs for proper prefilling"""
+        try:
+            if not self.api_key:
+                return {'success': False, 'error': 'No API key configured'}
+            
+            url = f"{self.base_url}/templates/{template_id}"
+            response = requests.get(url, headers=self.headers, timeout=15)
+            
+            if response.status_code == 200:
+                template_data = response.json()
+                print(f"[DEBUG] Template {template_id} structure:")
+                print(f"[DEBUG] Recipients: {template_data.get('recipients', [])}")
+                print(f"[DEBUG] Field: {template_data.get('Field', [])}")
+                
+                # Map field labels to field IDs - handle None fieldMeta
+                label_to_field = {}
+                for field in template_data.get('Field', []):
+                    field_meta = field.get('fieldMeta') or {}  # Handle None fieldMeta
+                    label = field_meta.get('label', '')
+                    if label:
+                        # If we already have this label, keep the first one unless it's a duplicate
+                        if label not in label_to_field:
+                            label_to_field[label] = {
+                                'id': field['id'],
+                                'type': field_meta.get('type', 'text')
+                            }
+                
+                # Get recipient IDs
+                recipient_ids = [r['id'] for r in template_data.get('recipients', [])]
+                
+                return {
+                    'success': True,
+                    'label_to_field': label_to_field,
+                    'recipient_ids': recipient_ids,
+                    'template_data': template_data
+                }
+            else:
+                return {'success': False, 'error': f'Template fetch failed: {response.status_code}'}
+                
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
     def create_signature_request(self, directors_data: List[Dict], clickup_task_id: str, 
-                               company_name: str, document_content: bytes = None) -> Dict:
+                               company_name: str, registration_number: str = None, document_content: bytes = None) -> Dict:
         """
         Create e-signature request with director information
         
@@ -37,6 +80,19 @@ class DocumensoService:
         Returns:
             dict: Result of signature request operation
         """
+        
+        # Fixed template 5442 - hardcode known field IDs for efficiency
+        template_id = '5442'
+        
+        # Known field IDs from template 5442 analysis
+        COMPANY_NAME_FIELD_IDS = [1332978, 1454718]  # Both Company_Name fields
+        REGISTRATION_NUMBER_FIELD_ID = 1454719
+        RECIPIENT_ID = 373233
+        
+        print(f"[DEBUG] Using fixed template {template_id} with known field IDs:")
+        print(f"[DEBUG] Company_Name fields: {COMPANY_NAME_FIELD_IDS}")
+        print(f"[DEBUG] Registration_Number field: {REGISTRATION_NUMBER_FIELD_ID}")
+        print(f"[DEBUG] Recipient ID: {RECIPIENT_ID}")
         try:
             if not self.api_key:
                 print("Warning: Documenso API key not configured")
@@ -55,7 +111,7 @@ class DocumensoService:
                 'engineering@swipey.co'
             }
             
-            # Prepare recipients from directors data - filter to approved emails only
+            # Prepare recipients from directors data using template recipient IDs
             recipients = []
             for i, director in enumerate(directors_data):
                 director_name = director.get('name', f'Director {i+1}')
@@ -74,7 +130,7 @@ class DocumensoService:
                     print(f"[REDIRECT] Redirecting {director_email} to test email: {test_email}")
                 
                 recipients.append({
-                    'id': 373233,  # Template recipient ID from template 5442
+                    'id': RECIPIENT_ID,  # Use hardcoded recipient ID
                     'name': director_name,
                     'email': test_email,
                     'signingOrder': 1
@@ -108,10 +164,19 @@ class DocumensoService:
                     },
                     'webhookUrl': os.getenv('WEBHOOK_BASE_URL', 'https://internal-automation-production.up.railway.app') + '/documenso-webhook'
                 },
-                'formValues': {
-                    'Company_Name': company_name  # Prefill company name field
-                }
+                'prefillFields': self._build_prefill_fields_fixed(
+                    company_name, 
+                    registration_number, 
+                    COMPANY_NAME_FIELD_IDS, 
+                    REGISTRATION_NUMBER_FIELD_ID
+                )
             }
+            
+            # Debug logging for prefill data
+            print(f"[DEBUG] Documenso prefill data being sent:")
+            print(f"[DEBUG] Company_Name: '{company_name}'")
+            print(f"[DEBUG] Registration_Number: '{registration_number or ''}'")
+            print(f"[DEBUG] Full prefillFields: {payload['prefillFields']}")
             
             # If document content is provided, include it
             if document_content:
@@ -126,12 +191,14 @@ class DocumensoService:
             print(f"Creating signature request for {company_name} with {len(recipients)} recipients...")
             print(f"ClickUp Task: {clickup_task_id}")
             
-            # Send request to Documenso API - try create-document instead of generate-document
-            template_id = '5442'  # New template ID from upgraded workspace
-            url = f"{self.base_url}/templates/{template_id}/create-document"
+            # Send request to Documenso API using the correct generate-document endpoint
+            url = f"{self.base_url}/templates/{template_id}/generate-document"
             
             print(f"Using template endpoint: {url}")
             response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+            
+            print(f"[DEBUG] Documenso API response status: {response.status_code}")
+            print(f"[DEBUG] Documenso API response: {response.text[:500]}...")
             
             if response.status_code in [200, 201]:
                 response_data = response.json()
@@ -220,7 +287,16 @@ class DocumensoService:
             
             # Use external_id from Documenso payload (this is the ClickUp task ID)
             clickup_task_id = external_id
-            company_name = payload_data.get('formValues', {}).get('Company_Name', 'Unknown Company')
+            # Try to get company name from multiple possible sources in webhook
+            company_name = 'Unknown Company'
+            if 'formValues' in payload_data:
+                company_name = payload_data['formValues'].get('Company_Name', 'Unknown Company')
+            elif 'prefillFields' in payload_data:
+                # Look for company name in prefillFields array
+                for field in payload_data['prefillFields']:
+                    if field.get('label') == 'Company_Name' or 'company' in field.get('label', '').lower():
+                        company_name = field.get('value', 'Unknown Company')
+                        break
             
             # Try to get from database for additional info, but don't fail if not found
             stored_request = self._get_signature_request(str(document_id)) if document_id else None
@@ -478,11 +554,66 @@ class DocumensoService:
                 
         except Exception as e:
             print(f"Consent field update error (non-critical): {e}")
+    
+    def _build_prefill_fields_fixed(self, company_name: str, registration_number: str, 
+                                   company_name_field_ids: List[int], registration_number_field_id: int) -> List[Dict]:
+        """Build prefillFields array using fixed field IDs for template 5442"""
+        prefill_fields = []
+        
+        # Fill ALL Company_Name fields if value exists
+        if company_name:
+            for field_id in company_name_field_ids:
+                prefill_fields.append({
+                    'id': field_id,
+                    'type': 'text',
+                    'value': str(company_name)
+                })
+                print(f"[DEBUG] Filled Company_Name field ID {field_id} = '{company_name}'")
+        else:
+            print(f"[DEBUG] Company name is empty, skipping Company_Name fields")
+        
+        # Fill Registration_Number field if value exists
+        if registration_number:
+            prefill_fields.append({
+                'id': registration_number_field_id,
+                'type': 'text',
+                'value': str(registration_number)
+            })
+            print(f"[DEBUG] Filled Registration_Number field ID {registration_number_field_id} = '{registration_number}'")
+        else:
+            print(f"[DEBUG] Registration number is empty, skipping Registration_Number field")
+        
+        print(f"[DEBUG] Total prefill fields created: {len(prefill_fields)}")
+        return prefill_fields
+    
+    def _build_prefill_fields(self, label_to_field: Dict, company_name: str, registration_number: str = None) -> List[Dict]:
+        """Build prefillFields array using correct field IDs and types - LEGACY METHOD"""
+        prefill_fields = []
+        
+        # Map our data to template fields
+        field_mappings = {
+            'Company_Name': company_name,
+            'Registration_Number': registration_number or ''
+        }
+        
+        for label, value in field_mappings.items():
+            if label in label_to_field and value:  # Only add if field exists and value is not empty
+                field_info = label_to_field[label]
+                prefill_fields.append({
+                    'id': field_info['id'],
+                    'type': field_info['type'],
+                    'value': str(value)
+                })
+                print(f"[DEBUG] Mapped {label} -> field ID {field_info['id']} (type: {field_info['type']}) = '{value}'")
+            else:
+                print(f"[WARNING] Field '{label}' not found in template or value is empty")
+        
+        return prefill_fields
 
 
 # Convenience functions for easy import
 def send_signature_request_to_directors(directors_data: List[Dict], clickup_task_id: str, 
-                                      company_name: str, document_content: bytes = None) -> Dict:
+                                      company_name: str, registration_number: str = None, document_content: bytes = None) -> Dict:
     """
     Convenience function to send e-signature request to directors
     
@@ -497,7 +628,7 @@ def send_signature_request_to_directors(directors_data: List[Dict], clickup_task
     """
     service = DocumensoService()
     return service.create_signature_request(
-        directors_data, clickup_task_id, company_name, document_content
+        directors_data, clickup_task_id, company_name, registration_number, document_content
     )
 
 

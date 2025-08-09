@@ -35,7 +35,7 @@ print(f"AWS_S3_BUCKET: {os.getenv('AWS_S3_BUCKET')}")
 print(f"AWS_REGION: {os.getenv('AWS_REGION')}")
 print("==================")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 
 # ClickUp Configuration (optional - only for adding comments to existing tasks)
 CLICKUP_API_TOKEN = os.getenv('CLICKUP_API_TOKEN')
@@ -201,7 +201,8 @@ def send_upload_email(customer_email, customer_name, upload_link, company_name=N
         message.dynamic_template_data = {
             'customer_name': customer_name,
             'upload_link': upload_link,
-            'Company_name': company_name or 'your company'  # Add Company_name for template
+            'Company_name': company_name or 'your company',  # Add Company_name for template
+            'sample_pdf_url': f"{request.host_url}static/samples/Sample%20Section%2014%20or%20Super%20Form.pdf"
         }
         
         response = sg.send(message)
@@ -2362,7 +2363,10 @@ def test_email_from_supabase(uuid):
 def trigger_documenso_signature_route(clickup_task_id):
     """Trigger Documenso e-signature request for a specific ClickUp task"""
     try:
-        print(f"Triggering Documenso e-signature request for ClickUp task: {clickup_task_id}")
+        print(f"[DEBUG] === DOCUMENSO TRIGGER START ===")
+        print(f"[DEBUG] Triggering Documenso e-signature request for ClickUp task: {clickup_task_id}")
+        print(f"[DEBUG] Request method: {request.method}")
+        print(f"[DEBUG] Request path: {request.path}")
         
         # Get company and director information
         if not supabase:
@@ -2374,7 +2378,6 @@ def trigger_documenso_signature_route(clickup_task_id):
             return jsonify({'error': f'Company not found for task {clickup_task_id}'}), 404
         
         company = company_result.data[0]
-        company_name = company.get('company_name', 'Unknown Company')
         
         # Find latest completed OCR document for this task
         doc_result = supabase.table('documents').select('*').eq('clickup_task_id', clickup_task_id).eq('ocr_status', 'completed').order('created_at', desc=True).limit(1).execute()
@@ -2384,6 +2387,10 @@ def trigger_documenso_signature_route(clickup_task_id):
         
         document = doc_result.data[0]
         directors_data = document.get('extracted_directors', [])
+        
+        # Use extracted data from documents table for prefilling
+        company_name = document.get('extracted_company_name', 'Unknown Company')
+        registration_number = document.get('extracted_registration_number', '')
         
         if not directors_data:
             return jsonify({'error': 'No directors data found in OCR results'}), 400
@@ -2401,7 +2408,8 @@ def trigger_documenso_signature_route(clickup_task_id):
         result = send_signature_request_to_directors(
             directors_data=valid_directors,
             clickup_task_id=clickup_task_id,
-            company_name=company_name
+            company_name=company_name,
+            registration_number=registration_number
         )
         
         if result.get('success'):
@@ -2535,9 +2543,15 @@ def test_documenso_trigger_route():
 def esignature_request(token):
     """Handle e-signature request from upload page"""
     try:
+        print(f"[DEBUG] === E-SIGNATURE REQUEST START ===")
+        print(f"[DEBUG] Token: {token}")
+        
         # Decode customer data from token
         customer_data = decode_customer_token(token)
         clickup_task_id = customer_data.get('taskId')
+        
+        print(f"[DEBUG] Decoded customer data: {customer_data}")
+        print(f"[DEBUG] ClickUp Task ID: {clickup_task_id}")
         
         # Get request data
         data = request.get_json()
@@ -2546,24 +2560,25 @@ def esignature_request(token):
         if not clickup_task_id:
             return jsonify({'error': 'Invalid token or missing task ID'}), 400
         
-        # Get company data from Supabase
+        # Get data from documents table (like /send-signature-direct endpoint)
         if not supabase:
             return jsonify({'error': 'Database not configured'}), 500
         
-        response = supabase.table('companies').select('*').eq('clickup_task_id', clickup_task_id).execute()
-        if not response.data:
-            return jsonify({'error': 'Company not found'}), 404
-        
-        company = response.data[0]
-        company_name = company.get('company_name', 'Unknown Company')
-        
-        # Get directors from documents table and use the selected index from frontend
-        doc_response = supabase.table('documents').select('id, extracted_directors').eq('clickup_task_id', clickup_task_id).order('created_at', desc=True).limit(1).execute()
+        # Get latest OCR document with extracted data
+        doc_response = supabase.table('documents').select('*').eq('clickup_task_id', clickup_task_id).eq('ocr_status', 'completed').order('created_at', desc=True).limit(1).execute()
         if not doc_response.data:
-            return jsonify({'error': 'No documents found for this task'}), 404
+            return jsonify({'error': 'No completed OCR documents found for this task'}), 404
         
         document = doc_response.data[0]
         directors_data = document.get('extracted_directors', [])
+        
+        # Use extracted data from documents table for prefilling (FIXED)
+        company_name = document.get('extracted_company_name', 'Unknown Company')
+        registration_number = document.get('extracted_registration_number', '')
+        
+        print(f"[DEBUG] Using extracted data from documents table:")
+        print(f"[DEBUG] Company Name: {company_name}")
+        print(f"[DEBUG] Registration Number: {registration_number}")
         
         if not directors_data or len(directors_data) == 0:
             return jsonify({'error': 'No directors found for this company'}), 400
@@ -2631,11 +2646,12 @@ E-signature request has been sent to the selected director for account activatio
         from services.documenso_service import DocumensoService
         documenso_service = DocumensoService(supabase_client=supabase)
         
-        # Create signature request with the selected director
+        # Create signature request with the selected director (FIXED - added registration_number)
         signature_result = documenso_service.create_signature_request(
             directors_data=[selected_director],  # Only send to selected director
             clickup_task_id=clickup_task_id,
-            company_name=company_name
+            company_name=company_name,
+            registration_number=registration_number
         )
         
         if signature_result.get('success'):
@@ -2653,7 +2669,10 @@ E-signature request has been sent to the selected director for account activatio
             }), 500
         
     except Exception as e:
-        print(f"E-signature request error: {e}")
+        print(f"[ERROR] === E-SIGNATURE REQUEST ERROR ===")
+        print(f"[ERROR] Error: {e}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 

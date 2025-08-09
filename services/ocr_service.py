@@ -48,15 +48,26 @@ class OCRService:
             extracted_data = self._extract_key_information(response)
             print(f"Extracted data: {extracted_data}")
             
-            # Update database
-            self._update_database(document_id, extracted_data, 'completed')
+            # Validate required fields
+            is_valid, validation_message = self._validate_required_fields(extracted_data)
+            print(f"Validation result: {validation_message}")
+            
+            if is_valid:
+                # Update database with success
+                self._update_database(document_id, extracted_data, 'completed')
+                status = 'completed'
+            else:
+                # Update database with failure due to missing fields
+                self._update_database(document_id, extracted_data, 'failed')
+                status = 'failed'
             
             print(f"=== SYNC OCR PROCESSING COMPLETE ===")
             
             return {
-                'success': True,
+                'success': is_valid,
                 'extracted_data': extracted_data,
-                'ocr_status': 'completed',
+                'ocr_status': status,
+                'validation_message': validation_message,
                 'method': 'sync_textract'
             }
             
@@ -111,14 +122,27 @@ class OCRService:
                 
                 if status_result['status'] == 'COMPLETED':
                     extracted_data = status_result['extracted_data']
-                    self._update_database(document_id, extracted_data, 'completed')
                     
-                    print(f"ASYNC OCR COMPLETED! Extracted: {extracted_data}")
+                    # Validate required fields
+                    is_valid, validation_message = self._validate_required_fields(extracted_data)
+                    print(f"Validation result: {validation_message}")
+                    
+                    if is_valid:
+                        # Update database with success
+                        self._update_database(document_id, extracted_data, 'completed')
+                        status = 'completed'
+                    else:
+                        # Update database with failure due to missing fields
+                        self._update_database(document_id, extracted_data, 'failed')
+                        status = 'failed'
+                    
+                    print(f"ASYNC OCR COMPLETED! Status: {status}, Extracted: {extracted_data}")
                     
                     return {
-                        'success': True,
+                        'success': is_valid,
                         'extracted_data': extracted_data,
-                        'ocr_status': 'completed',
+                        'ocr_status': status,
+                        'validation_message': validation_message,
                         'job_id': job_id,
                         'method': 'async_textract'
                     }
@@ -885,6 +909,32 @@ class OCRService:
                 if block['BlockType'] == 'WORD':
                     text += block.get('Text', '') + " "
         return text.strip()
+    
+    def _validate_required_fields(self, extracted_data):
+        """Validate that all required fields are extracted and not empty"""
+        if not extracted_data:
+            return False, "No extracted data available"
+        
+        # Check required fields
+        company_name = extracted_data.get('company_name')
+        registration_number = extracted_data.get('registration_number')
+        directors = extracted_data.get('directors', [])
+        
+        missing_fields = []
+        
+        if not company_name or company_name.strip() == '':
+            missing_fields.append('company_name')
+        
+        if not registration_number or registration_number.strip() == '':
+            missing_fields.append('registration_number')
+        
+        if not directors or len(directors) == 0:
+            missing_fields.append('directors')
+        
+        if missing_fields:
+            return False, f"Missing required fields: {', '.join(missing_fields)}"
+        
+        return True, "All required fields present"
     
     def _update_database(self, document_id, extracted_data, status):
         """Update database with OCR results"""
