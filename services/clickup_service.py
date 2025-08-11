@@ -551,6 +551,66 @@ class ClickUpService:
             print(f"SSM Doc URL field update failed (non-critical): {e}")
             return {'success': False, 'error': str(e)}
     
+    def _update_signed_consent_form_field(self, task_id, attachment_url, filename):
+        """Update Signed Consent Form custom field with signed document URL"""
+        try:
+            # Get task with custom fields to find Signed Consent Form field
+            task_info = self._get_task_with_custom_fields(task_id)
+            if not task_info.get('success'):
+                print(f"Could not get task info for Signed Consent Form field update: {task_info.get('error')}")
+                return {'success': False, 'error': 'Could not get task info'}
+            
+            custom_fields = task_info.get('custom_fields', [])
+            consent_field_id = None
+            consent_field = None
+            
+            # Find Signed Consent Form field
+            for field in custom_fields:
+                field_name = field.get('name', '').lower()
+                # Match field that contains "signed consent form"
+                if 'signed consent form' in field_name or 'signed consent' in field_name:
+                    consent_field_id = field.get('id')
+                    consent_field = field
+                    print(f"Found Signed Consent Form field (ID: {consent_field_id})")
+                    break
+            
+            if not consent_field_id:
+                print(f"[WARNING] Signed Consent Form field not found in task {task_id}")
+                return {'success': False, 'error': 'Signed Consent Form field not found'}
+            
+            # Check field type
+            field_type = consent_field.get('type')
+            print(f"Signed Consent Form field type: {field_type}")
+            
+            if field_type != 'url':
+                print(f"[WARNING] Signed Consent Form field is not a URL field (type: {field_type})")
+                return {'success': False, 'error': f'Field type is {field_type}, expected url'}
+            
+            # Update the field
+            url = f"{self.base_url}/task/{task_id}/field/{consent_field_id}"
+            payload = {
+                'value': attachment_url
+            }
+            
+            print(f"Updating Signed Consent Form field with URL: {attachment_url}")
+            
+            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                try:
+                    print(f"[OK] Updated Signed Consent Form field with signed document: {filename}")
+                except UnicodeEncodeError:
+                    print(f"[OK] Updated Signed Consent Form field with signed document (filename contains special chars)")
+                return {'success': True}
+            else:
+                error_msg = f"Signed Consent Form field update failed: {response.status_code} - {response.text}"
+                print(f"[WARNING] {error_msg}")
+                return {'success': False, 'error': error_msg}
+                
+        except Exception as e:
+            print(f"Signed Consent Form field update failed (non-critical): {e}")
+            return {'success': False, 'error': str(e)}
+    
     def update_director_fields(self, task_id, directors_data):
         """Update Director Name and Director Email custom fields with first director from OCR"""
         try:
@@ -913,6 +973,119 @@ def attach_document_to_clickup_task(task_id, file_path, filename):
     """
     service = ClickUpService()
     return service.attach_document_to_task(task_id, file_path, filename)
+
+
+def attach_document_content_to_task(task_id, file_content, filename, comment=None):
+    """
+    Convenience function to attach document content (bytes) to ClickUp task
+    
+    Args:
+        task_id (str): ClickUp task ID
+        file_content (bytes): File content as bytes
+        filename (str): Name of the file
+        comment (str): Optional comment to add with the attachment
+    
+    Returns:
+        dict: Result of the attachment operation
+    """
+    import tempfile
+    import os
+    
+    try:
+        # Create temporary file with the content
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
+        
+        # Attach using existing function
+        service = ClickUpService()
+        result = service.attach_document_to_task(task_id, temp_file_path, filename)
+        
+        # Add comment if provided and attachment succeeded
+        if result.get('success') and comment:
+            try:
+                service.add_comment_to_task(task_id, comment)
+            except Exception as e:
+                print(f"Warning: Could not add comment: {e}")
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_file_path)
+        except Exception as e:
+            print(f"Warning: Could not delete temp file: {e}")
+            
+        return result
+        
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def attach_signed_document_content_to_task(task_id, file_content, filename, comment=None):
+    """
+    Convenience function to attach signed document content to ClickUp task 
+    and update Signed Consent Form field (NOT SSM Doc field)
+    
+    Args:
+        task_id (str): ClickUp task ID
+        file_content (bytes): File content as bytes
+        filename (str): Name of the file
+        comment (str): Optional comment to add with the attachment
+    
+    Returns:
+        dict: Result of the attachment operation
+    """
+    import tempfile
+    import os
+    
+    try:
+        # Create temporary file with the content
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
+        
+        # Upload as attachment WITHOUT updating SSM Doc field
+        service = ClickUpService()
+        attachment_result = service._upload_file_attachment(task_id, temp_file_path, filename)
+        
+        if not attachment_result.get('success'):
+            return attachment_result
+        
+        attachment_url = attachment_result.get('attachment_url')
+        
+        # Update Signed Consent Form field instead of SSM Doc field
+        consent_field_result = service._update_signed_consent_form_field(task_id, attachment_url, filename)
+        
+        # Add comment if provided and attachment succeeded
+        if comment:
+            try:
+                # Use existing comment functionality from other methods
+                headers = {
+                    'Authorization': service.api_token,
+                    'Content-Type': 'application/json'
+                }
+                comment_url = f"{service.base_url}/task/{task_id}/comment"
+                comment_payload = {
+                    'comment_text': comment,
+                    'notify_all': False
+                }
+                requests.post(comment_url, headers=headers, json=comment_payload, timeout=10)
+            except Exception as e:
+                print(f"Warning: Could not add comment: {e}")
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_file_path)
+        except Exception as e:
+            print(f"Warning: Could not delete temp file: {e}")
+            
+        return {
+            'success': True,
+            'attachment_url': attachment_url,
+            'signed_consent_field_updated': consent_field_result.get('success', False)
+        }
+        
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 
 def update_clickup_director_fields(task_id, directors_data):

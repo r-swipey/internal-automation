@@ -338,6 +338,11 @@ class DocumensoService:
                 print(f"Updating Consent & Authorisation field to: {mapped_status}")
                 self._update_consent_field(clickup_task_id, mapped_status, additional_info)
             
+            # Download and attach signed document to ClickUp when completed
+            if mapped_status == 'completed':
+                print(f"Document completed! Downloading signed document {document_id}...")
+                self._download_and_attach_signed_document(document_id, clickup_task_id, company_name)
+            
             print(f"[OK] Webhook processed: {event_type} -> {mapped_status} for task {clickup_task_id}")
             
             return {
@@ -429,6 +434,80 @@ class DocumensoService:
                 return {'success': False, 'error': f"API error: {response.status_code}"}
                 
         except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def download_completed_document(self, document_id: str) -> Dict:
+        """Download completed signed document from Documenso"""
+        try:
+            if not self.api_key:
+                return {'success': False, 'error': 'No API key configured'}
+            
+            # Try common download endpoints for Documenso
+            possible_endpoints = [
+                f"{self.base_url}/documents/{document_id}/download",
+                f"{self.base_url}/documents/{document_id}/download/completed",
+                f"{self.base_url}/documents/{document_id}/pdf",
+                f"{self.base_url}/documents/{document_id}/certificate"
+            ]
+            
+            for endpoint in possible_endpoints:
+                print(f"[DEBUG] Trying download endpoint: {endpoint}")
+                response = requests.get(endpoint, headers=self.headers, timeout=30)
+                
+                print(f"[DEBUG] Response status: {response.status_code}")
+                print(f"[DEBUG] Response headers: {dict(response.headers)}")
+                print(f"[DEBUG] Response content size: {len(response.content)}")
+                print(f"[DEBUG] Response content preview: {response.content[:200]}")
+                
+                if response.status_code == 200:
+                    # Check if we got actual PDF content
+                    if response.content.startswith(b'%PDF'):
+                        return {
+                            'success': True, 
+                            'content': response.content,
+                            'content_type': response.headers.get('content-type', 'application/pdf'),
+                            'filename': f'signed_document_{document_id}.pdf',
+                            'endpoint_used': endpoint
+                        }
+                    # Check if we got a JSON response with downloadUrl (Documenso format)
+                    elif response.headers.get('content-type') == 'application/json':
+                        try:
+                            import json
+                            json_response = json.loads(response.content.decode())
+                            download_url = json_response.get('downloadUrl')
+                            
+                            if download_url:
+                                print(f"[INFO] Got pre-signed download URL, fetching actual PDF...")
+                                # Download from the pre-signed URL
+                                pdf_response = requests.get(download_url, timeout=30)
+                                
+                                if pdf_response.status_code == 200 and pdf_response.content.startswith(b'%PDF'):
+                                    return {
+                                        'success': True, 
+                                        'content': pdf_response.content,
+                                        'content_type': pdf_response.headers.get('content-type', 'application/pdf'),
+                                        'filename': f'signed_document_{document_id}.pdf',
+                                        'endpoint_used': endpoint,
+                                        'download_url': download_url
+                                    }
+                                else:
+                                    print(f"[WARNING] Failed to download PDF from pre-signed URL: {pdf_response.status_code}")
+                            
+                        except (json.JSONDecodeError, Exception) as e:
+                            print(f"[WARNING] Failed to parse JSON response: {e}")
+                        
+                        print(f"[WARNING] Got JSON response without valid downloadUrl from {endpoint}")
+                        continue
+                    else:
+                        print(f"[WARNING] Got unexpected content type from {endpoint}: {response.headers.get('content-type')}")
+                        continue
+                else:
+                    print(f"[WARNING] {endpoint} failed: {response.status_code} - {response.text[:200]}")
+            
+            return {'success': False, 'error': 'No working download endpoint found'}
+                
+        except Exception as e:
+            print(f"Document download error: {e}")
             return {'success': False, 'error': str(e)}
     
     def _store_signature_request(self, document_id: str, clickup_task_id: str, 
@@ -552,6 +631,43 @@ class DocumensoService:
                 
         except Exception as e:
             print(f"Consent field update error (non-critical): {e}")
+    
+    def _download_and_attach_signed_document(self, document_id: str, clickup_task_id: str, company_name: str):
+        """Download signed document and attach it to ClickUp task"""
+        try:
+            print(f"[INFO] Downloading signed document {document_id} for task {clickup_task_id}")
+            
+            # Download the completed document
+            download_result = self.download_completed_document(document_id)
+            
+            if not download_result.get('success'):
+                print(f"[ERROR] Failed to download document: {download_result.get('error')}")
+                return
+            
+            # Import ClickUp service for signed document attachment
+            from .clickup_service import attach_signed_document_content_to_task
+            
+            # Prepare file info for ClickUp attachment
+            file_content = download_result['content']
+            filename = f"Signed_Consent_Authorization_{company_name}_{document_id}.pdf"
+            
+            print(f"[INFO] Attaching signed document to ClickUp task: {filename}")
+            
+            # Attach to ClickUp task with Signed Consent Form field update
+            attachment_result = attach_signed_document_content_to_task(
+                clickup_task_id, 
+                file_content, 
+                filename,
+                comment=f"✅ Signed consent and authorization documents from {company_name} (Documenso Document ID: {document_id})"
+            )
+            
+            if attachment_result.get('success'):
+                print(f"[OK] Signed document attached to ClickUp task {clickup_task_id}")
+            else:
+                print(f"[WARNING] Failed to attach signed document: {attachment_result.get('error')}")
+                
+        except Exception as e:
+            print(f"Signed document attachment error (non-critical): {e}")
     
     def _build_prefill_fields_fixed(self, company_name: str, registration_number: str, 
                                    company_name_field_ids: List[int], registration_number_field_id: int) -> List[Dict]:
