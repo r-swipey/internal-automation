@@ -266,14 +266,28 @@ class DocumensoService:
                 return {'success': False, 'error': 'No ClickUp task ID (externalId) in webhook payload'}
             # Try to get company name from multiple possible sources in webhook
             company_name = 'Unknown Company'
-            if 'formValues' in payload_data:
-                company_name = payload_data['formValues'].get('Company_Name', 'Unknown Company')
-            elif 'prefillFields' in payload_data:
-                # Look for company name in prefillFields array
+            
+            # Check formValues (but ensure it's not None)
+            form_values = payload_data.get('formValues')
+            if form_values and isinstance(form_values, dict):
+                company_name = form_values.get('Company_Name', 'Unknown Company')
+            
+            # Check prefillFields (but ensure it's not None)  
+            elif 'prefillFields' in payload_data and payload_data['prefillFields']:
                 for field in payload_data['prefillFields']:
-                    if field.get('label') == 'Company_Name' or 'company' in field.get('label', '').lower():
+                    if field and field.get('label') == 'Company_Name' or 'company' in field.get('label', '').lower():
                         company_name = field.get('value', 'Unknown Company')
                         break
+            
+            # Try to extract from document title as fallback
+            elif 'title' in payload_data:
+                title = payload_data.get('title', '')
+                if 'KYB Signature Request -' in title:
+                    company_name = title.replace('KYB Signature Request -', '').strip()
+                    if company_name:
+                        company_name = company_name
+                    else:
+                        company_name = 'Unknown Company'
             
             # Try to get from database for additional info, but don't fail if not found
             stored_request = self._get_signature_request(str(document_id)) if document_id else None
