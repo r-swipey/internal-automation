@@ -229,12 +229,18 @@ class ClickUpService:
                 field_name = status_type  # Fallback to the status_type itself
             
             for field in custom_fields:
-                if field.get('name', '').lower() in [field_name.lower(), status_type.lower()]:
+                if field.get('name', '').lower() == field_name.lower() or field.get('name', '').lower() == status_type.lower():
                     field_id = field.get('id')
                     break
             
             if not field_id:
                 print(f"Custom field '{field_name}' not found in task {task_id}")
+                print(f"Available custom fields:")
+                for field in custom_fields:
+                    try:
+                        print(f"  - '{field.get('name', '')}' (type: {field.get('type', 'unknown')})")
+                    except UnicodeEncodeError:
+                        print(f"  - [field with emoji] (type: {field.get('type', 'unknown')})")
                 return
             
             # Get the correct value for dropdown fields

@@ -246,7 +246,8 @@ class OCRService:
             'company_type': None,
             'business_address': None,
             'business_phone': None,
-            'directors': []  # List of directors
+            'directors': [],  # List of directors
+            'document_type': 'unknown'  # New field for document type
         }
         
         blocks = textract_response['Blocks']
@@ -269,7 +270,30 @@ class OCRService:
         # Extract text content for pattern matching
         text_content = self._extract_all_text(blocks)
         
-        # DEBUG: Print raw text structure
+        # Detect document format
+        document_type = self._detect_document_format(text_content)
+        extracted_data['document_type'] = document_type
+        
+        print(f"=== DETECTED DOCUMENT TYPE: {document_type.upper()} ===")
+        
+        # Route extraction based on format
+        if document_type == 'SSM e-info':
+            # Use new SSM e-info extraction logic
+            print("Using SSM e-info extraction logic...")
+            extracted_data.update(self._extract_einfo_company_info(text_content))
+            extracted_data['directors'] = self._extract_einfo_director_info(text_content)
+        elif document_type == 'section 14':
+            # Use existing Section 14 extraction logic
+            print("Using Section 14 extraction logic...")
+            extracted_data.update(self._extract_company_info(text_content))
+            extracted_data['directors'] = self._extract_director_info(text_content)
+        else:
+            print("Unknown format - attempting Section 14 logic as fallback...")
+            # Fallback to existing logic for unknown formats
+            extracted_data.update(self._extract_company_info(text_content))
+            extracted_data['directors'] = self._extract_director_info(text_content)
+        
+        # DEBUG: Print raw text structure (moved after format detection)
         print("=== RAW TEXT STRUCTURE ===")
         lines = text_content.split('\n')
         for i, line in enumerate(lines):
@@ -281,18 +305,24 @@ class OCRService:
         try:
             debug_dir = r"C:\Users\kalya\Documents\internal-automation\Debug"
             os.makedirs(debug_dir, exist_ok=True)
-            debug_file_path = os.path.join(debug_dir, 'raw_text_debug.txt')
+            debug_file_path = os.path.join(debug_dir, f'raw_text_debug_{document_type.replace(" ", "_")}.txt')
             with open(debug_file_path, 'w', encoding='utf-8') as f:
                 f.write(text_content)
             print(f"Raw text saved to {debug_file_path} for analysis")
         except Exception as e:
             print(f"Could not save debug file: {e}")
         
-        # Extract company information using pattern matching
-        extracted_data.update(self._extract_company_info(text_content))
-        
-        # Extract director information
-        extracted_data['directors'] = self._extract_director_info(text_content)
+        # TEMPORARY: Save raw Textract JSON response for debugging
+        try:
+            import json
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            json_file_path = os.path.join(debug_dir, f'textract_response_{document_type.replace(" ", "_")}_{timestamp}.json')
+            with open(json_file_path, 'w', encoding='utf-8') as f:
+                json.dump(textract_response, f, indent=2, ensure_ascii=False)
+            print(f"🔧 [TEMP DEBUG] Textract JSON response saved to {json_file_path}")
+        except Exception as e:
+            print(f"Could not save Textract JSON: {e}")
         
         # Extract from key-value pairs (fallback method)
         for key_id, key_block in key_map.items():
@@ -330,6 +360,46 @@ class OCRService:
             if block['BlockType'] == 'LINE':
                 text_lines.append(block.get('Text', ''))
         return '\n'.join(text_lines)
+    
+    def _detect_document_format(self, text_content):
+        """Detect document format based on text content"""
+        text_upper = text_content.upper()
+        
+        # Check for Section 14 format indicators
+        section14_indicators = [
+            'SECTION 14',
+            'COMPANIES ACT 2016',
+            'APPLICATION FOR REGISTRATION OF A COMPANY',
+            'PARTICULARS OF DIRECTOR'
+        ]
+        
+        # Check for SSM e-info format indicators  
+        einfo_indicators = [
+            'SURUHANJAYA SYARIKAT MALAYSIA',
+            'SSM E-INFO SERVICES',
+            'CORPORATE INFORMATION',
+            'DIRECTORS/OFFICERS'
+        ]
+        
+        # Count matches for each format
+        section14_score = sum(1 for indicator in section14_indicators if indicator in text_upper)
+        einfo_score = sum(1 for indicator in einfo_indicators if indicator in text_upper)
+        
+        print(f"Format detection scores - Section 14: {section14_score}, SSM e-info: {einfo_score}")
+        
+        # Determine format based on scores and specific patterns
+        if einfo_score >= 2:
+            return 'SSM e-info'
+        elif section14_score >= 2 or 'SECTION 14' in text_upper:
+            return 'section 14'
+        else:
+            # Additional checks for edge cases
+            if 'COMPANIES COMMISSION OF MALAYSIA' in text_upper and 'CORPORATE INFORMATION' in text_upper:
+                return 'SSM e-info'
+            elif 'PARTICULARS OF DIRECTOR' in text_upper:
+                return 'section 14'
+            else:
+                return 'unknown'
     
     def _extract_company_info(self, text_content):
         """Extract company information using pattern matching"""
@@ -900,6 +970,200 @@ class OCRService:
         
         return directors
     
+    def _extract_einfo_company_info(self, text_content):
+        """Extract company information from SSM e-info format"""
+        import re
+        
+        company_info = {
+            'company_name': None,
+            'registration_number': None,
+            'incorporation_date': None,
+            'company_type': None,
+            'business_address': None,
+            'business_phone': None
+        }
+        
+        lines = text_content.split('\n')
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            
+            # Extract company name (format: ": COMPANY NAME SDN. BHD.")
+            if line.startswith(': ') and ('SDN' in line.upper() or 'BHD' in line.upper()):
+                company_name = line[2:].strip()  # Remove ": " prefix
+                if company_name and not company_info['company_name']:
+                    company_info['company_name'] = company_name
+                    # Extract company type
+                    if 'SDN. BHD.' in company_name.upper():
+                        company_info['company_type'] = 'SDN. BHD.'
+            
+            # Extract registration number (format: "201601022998 (1193937-P)")
+            if re.search(r'\d{12}\s*\(\d{6,7}-[A-Z]\)', line):
+                # Remove colon prefix if present
+                reg_number = line.strip()
+                if reg_number.startswith(': '):
+                    reg_number = reg_number[2:]
+                company_info['registration_number'] = reg_number
+            
+            # Extract incorporation date (format: "11-07-2016")
+            if 'Incorporation Date' in line and i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                if re.match(r'\d{2}-\d{2}-\d{4}', next_line):
+                    company_info['incorporation_date'] = next_line
+            # Also look for standalone date patterns after "Date :"
+            elif line.endswith('Date :') and i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                if re.match(r'\d{2}-\d{2}-\d{4}', next_line):
+                    company_info['incorporation_date'] = next_line
+            
+            # Map company type from "PRIVATE LIMITED" to "SDN. BHD."
+            if ': PRIVATE LIMITED' in line:
+                company_info['company_type'] = 'SDN. BHD.'
+            
+            # Extract business address (look for "Business Address" section)
+            if 'Business Address' in line:
+                address_lines = []
+                j = i + 1
+                while j < len(lines) and lines[j].strip():
+                    current_line = lines[j].strip()
+                    # Stop if we hit other sections
+                    if any(keyword in current_line for keyword in ['Postcode', 'Nature of Business', 'SSM']):
+                        if 'Postcode' in current_line:
+                            # Include postcode line
+                            postcode_match = re.search(r': (\d{5})', current_line)
+                            if postcode_match:
+                                address_lines.append(postcode_match.group(1))
+                        break
+                    # Skip lines that start with ":"
+                    if not current_line.startswith(':'):
+                        address_lines.append(current_line)
+                    else:
+                        # Handle address lines that start with ":"
+                        clean_line = current_line[1:].strip() if current_line.startswith(': ') else current_line
+                        if clean_line and clean_line not in ['Nil', 'NIL']:
+                            address_lines.append(clean_line)
+                    j += 1
+                
+                if address_lines:
+                    company_info['business_address'] = ', '.join(address_lines)
+        
+        return company_info
+    
+    def _extract_einfo_director_info(self, text_content):
+        """Extract director information from SSM e-info format"""
+        import re
+        
+        directors = []
+        lines = text_content.split('\n')
+        
+        # Find DIRECTORS/OFFICERS sections
+        director_sections = []
+        for i, line in enumerate(lines):
+            if 'DIRECTORS/OFFICERS' in line:
+                director_sections.append(i)
+        
+        print("=== SSM E-INFO DIRECTOR EXTRACTION ===")
+        
+        # Process each director section
+        for section_start in director_sections:
+            print(f"Processing director section starting at line {section_start}")
+            
+            # Look at the first 70 lines after DIRECTORS/OFFICERS header to capture all directors
+            # Handles multiple directors, variable layouts, and different SSM e-info formats
+            section_end = min(len(lines), section_start + 70)
+            
+            for i in range(section_start + 1, section_end):
+                line = lines[i].strip()
+                
+                # Skip empty lines
+                if not line:
+                    continue
+                
+                # Skip obvious non-name lines (headers, labels, etc.)
+                if any(keyword in line.upper() for keyword in ['NAME', 'DESIGNATION', 'IC/PASSPORT']):
+                    continue
+                
+                # Look for names that appear to be directors (much simpler criteria)
+                # Focus on Malaysian name patterns: A/L, A/P, BIN, BINTI, or typical 2-3 word names
+                if (re.search(r'^[A-Z][A-Z\s/]+$', line) and 
+                    len(line.split()) >= 2 and 
+                    len(line.split()) <= 4 and  # Real names usually 2-4 words
+                    len(line) >= 8 and len(line) <= 35 and  # Reasonable name length
+                    # Malaysian name pattern check
+                    ('A/L' in line or 'A/P' in line or 'BIN' in line or 'BINTI' in line or
+                     # Or typical 2-3 word names (not containing obvious address words)
+                     (len(line.split()) in [2, 3] and 
+                      not any(addr_word in line.upper() for addr_word in [
+                          'JALAN', 'ROAD', 'STREET', 'AVENUE', 'WILAYAH', 'KUALA LUMPUR', 
+                          'SELANGOR', 'JOHOR', 'PENANG', 'MALAYSIA', 'TAMAN', 'BANDAR'
+                      ])))):
+                    
+                    print(f"  Found potential director name at line {i}: {line}")
+                    
+                    # This looks like a director name
+                    director = {
+                        'name': line,
+                        'id_type': 'NRIC',  # Default to NRIC
+                        'id_number': None,
+                        'email': None  # SSM e-info doesn't contain director emails
+                    }
+                    
+                    # Look for ID number in the next few lines (but not too far)
+                    id_found = False
+                    is_secretary = False
+                    
+                    for j in range(i + 1, min(i + 4, len(lines))):  # Extended to 4 lines to check for designation
+                        next_line = lines[j].strip()
+                        
+                        # Extract ID number - YYMMDD-PB-NNNN format
+                        if re.match(r'^\d{6}-\d{2}-\d{4}$', next_line):
+                            director['id_number'] = next_line
+                            print(f"    Found ID (format 1): {next_line}")
+                            id_found = True
+                        # Also check for 12-digit format  
+                        elif re.match(r'^\d{12}$', next_line):
+                            director['id_number'] = next_line
+                            print(f"    Found ID (format 2): {next_line}")
+                            id_found = True
+                        # Check for NRIC format without hyphens (like 840318085262)
+                        elif re.match(r'^\d{6}\d{2}\d{4}$', next_line) and len(next_line) == 12:
+                            # Convert to standard format with hyphens
+                            formatted_id = f"{next_line[:6]}-{next_line[6:8]}-{next_line[8:]}"
+                            director['id_number'] = formatted_id
+                            print(f"    Found ID (format 3, reformatted): {formatted_id}")
+                            id_found = True
+                        
+                        # Check for SECRETARY designation (secretary is always last, exclude them)
+                        if 'SECRETARY' in next_line.upper():
+                            is_secretary = True
+                            print(f"    Found SECRETARY designation: {next_line}")
+                    
+                    # CRITICAL: Only add director if we have name, ID, AND it's not a secretary
+                    # This prevents address components and secretaries from being treated as directors
+                    if director['name'] and id_found and not is_secretary:
+                        directors.append(director)
+                        print(f"  ✅ Added director: {director['name']} with ID: {director['id_number']}")
+                    elif is_secretary:
+                        print(f"  ❌ Rejected (secretary): {director['name']} - secretaries are not directors")
+                    else:
+                        print(f"  ❌ Rejected (no ID found): {director['name']} - likely an address component")
+        
+        # Remove duplicates based on name
+        seen_names = set()
+        unique_directors = []
+        for director in directors:
+            if director['name'] not in seen_names:
+                seen_names.add(director['name'])
+                unique_directors.append(director)
+        
+        print(f"Final director count: {len(unique_directors)}")
+        for director in unique_directors:
+            print(f"  - {director['name']} ({director['id_number']})")
+        
+        print("=== END DIRECTOR EXTRACTION ===")
+        
+        return unique_directors
+    
     def _get_text_from_blocks(self, block_ids, block_map):
         """Helper function to extract text from block IDs"""
         text = ""
@@ -956,7 +1220,8 @@ class OCRService:
                     'extracted_directors': extracted_data.get('directors', []),  # JSONB array
                     'extracted_incorporation_date': extracted_data.get('incorporation_date'),
                     'extracted_company_type': extracted_data.get('company_type'),
-                    'extracted_business_address': extracted_data.get('business_address')
+                    'extracted_business_address': extracted_data.get('business_address'),
+                    'document_type': extracted_data.get('document_type', 'unknown')  # New field
                 })
             
             print(f"Updating database for document {document_id} with status {status}")

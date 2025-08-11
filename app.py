@@ -2,7 +2,7 @@
 # Test passed with payload: K mohan 1829, VKK mohan 1829, kalyanamo@gmail.com, +6012365086
 # Customer record ID: 3f3fe1d3-e0ea-42e4-a60d-5a044274630d
 
-from flask import Flask, request, jsonify, render_template_string, render_template
+from flask import Flask, request, jsonify, render_template_string, render_template, send_from_directory
 import os
 from dotenv import load_dotenv
 import boto3
@@ -680,6 +680,20 @@ def health():
             "sendgrid": "configured" if sg else "not configured"
         }
     })
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon to avoid 404 errors"""
+    try:
+        return send_from_directory(
+            os.path.join(app.root_path, 'static'),
+            'favicon.ico',
+            mimetype='image/vnd.microsoft.icon'
+        )
+    except:
+        # Return empty response if favicon not found
+        from flask import Response
+        return Response(status=204)
 
 @app.route('/test-s3')
 def test_s3():
@@ -1556,7 +1570,8 @@ def upload_file_with_conversion(token):
                 'company_type': extracted_data.get('company_type'),
                 'business_address': extracted_data.get('business_address'),
                 'business_phone': extracted_data.get('business_phone'),
-                'directors': extracted_data.get('directors', [])
+                'directors': extracted_data.get('directors', []),
+                'document_type': extracted_data.get('document_type', 'unknown')
             },
             'debug_info': {
                 's3_key': s3_result['key'],
@@ -2123,7 +2138,8 @@ def upload_file_with_async_ocr(token):
                 'company_type': extracted_data.get('company_type'),
                 'business_address': extracted_data.get('business_address'),
                 'business_phone': extracted_data.get('business_phone'),
-                'directors': extracted_data.get('directors', [])
+                'directors': extracted_data.get('directors', []),
+                'document_type': extracted_data.get('document_type', 'unknown')
             },
             'debug_info': {
                 's3_key': s3_result['key'],
@@ -2440,23 +2456,20 @@ def documenso_webhook_route():
     """Handle Documenso webhook events for signature status updates"""
     print("=== DOCUMENSO WEBHOOK CALLED ===")
     try:
-        # Verify webhook secret if configured - TEMPORARILY DISABLED FOR DEBUG
+        # Verify webhook secret if configured
         webhook_secret = os.getenv('DOCUMENSO_WEBHOOK_SECRET')
-        print(f"DEBUG: Webhook secret configured: {webhook_secret is not None}")
         
-        # Get signature from headers for debugging
-        signature = request.headers.get('X-Documenso-Signature') or request.headers.get('X-Signature') or request.headers.get('Authorization')
-        print(f"DEBUG: Received signature: {signature}")
-        print(f"DEBUG: All headers: {dict(request.headers)}")
-        
-        # TEMPORARILY SKIP SIGNATURE VALIDATION FOR DEBUGGING
-        # if webhook_secret:
-        #     if not signature:
-        #         print("Warning: No webhook signature found in headers")
-        #         return jsonify({'error': 'Webhook signature required'}), 401
-        #     if webhook_secret not in signature:
-        #         print("Warning: Invalid webhook signature")
-        #         return jsonify({'error': 'Invalid webhook signature'}), 401
+        if webhook_secret:
+            # Check for Documenso webhook secret header
+            received_secret = request.headers.get('X-Documenso-Secret')
+            
+            if not received_secret:
+                print("Warning: No webhook secret found in headers")
+                return jsonify({'error': 'Webhook signature required'}), 401
+                
+            if received_secret != webhook_secret:
+                print("Warning: Invalid webhook secret")
+                return jsonify({'error': 'Invalid webhook signature'}), 401
         
         # Get webhook data
         webhook_data = request.get_json()
@@ -2465,7 +2478,17 @@ def documenso_webhook_route():
             print("ERROR: No webhook data received")
             return jsonify({'error': 'No webhook data received'}), 400
         
-        print(f"Received Documenso webhook: {webhook_data.get('event')}")
+        event_type = webhook_data.get('event')
+        payload_data = webhook_data.get('payload', {})
+        external_id = payload_data.get('externalId')
+        
+        print(f"=== DOCUMENSO WEBHOOK RECEIVED ===")
+        print(f"Event: {event_type}")
+        print(f"External ID (ClickUp Task): {external_id}")
+        print(f"Document ID: {payload_data.get('id')}")
+        print(f"Payload keys: {list(payload_data.keys()) if payload_data else 'No payload'}")
+        print(f"Full webhook payload: {webhook_data}")
+        print(f"=== END WEBHOOK DEBUG ===")
         
         # Process webhook with Documenso service
         from services.documenso_service import handle_documenso_webhook
@@ -2809,6 +2832,79 @@ def store_selected_director(token):
     except Exception as e:
         print(f"Store selected director error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/update-director-email/<token>', methods=['POST'])
+def update_director_email(token):
+    """Update director email in Supabase documents table"""
+    try:
+        # Decode customer data from token
+        customer_data = decode_customer_token(token)
+        clickup_task_id = customer_data.get('taskId')
+        
+        # Get request data
+        data = request.get_json()
+        director_index = data.get('directorIndex')
+        email = data.get('email', '').strip()
+        
+        if not clickup_task_id:
+            return jsonify({'error': 'Invalid token or missing task ID'}), 400
+        
+        if director_index is None:
+            return jsonify({'error': 'Director index is required'}), 400
+            
+        if not email:
+            return jsonify({'error': 'Email cannot be empty'}), 400
+        
+        # Basic email validation
+        if '@' not in email or '.' not in email:
+            return jsonify({'error': 'Invalid email format'}), 400
+        
+        # Get the latest document for this task
+        if not supabase:
+            return jsonify({'error': 'Database not configured'}), 500
+        
+        doc_response = supabase.table('documents').select('id, extracted_directors').eq('clickup_task_id', clickup_task_id).order('created_at', desc=True).limit(1).execute()
+        if not doc_response.data:
+            return jsonify({'error': 'No documents found for this task'}), 404
+        
+        document = doc_response.data[0]
+        directors_data = document.get('extracted_directors', [])
+        
+        if not directors_data or len(directors_data) == 0:
+            return jsonify({'error': 'No directors found in document'}), 400
+        
+        # Validate director index
+        try:
+            director_index = int(director_index)
+            if director_index < 0 or director_index >= len(directors_data):
+                return jsonify({'error': 'Invalid director index'}), 400
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Director index must be a number'}), 400
+        
+        # Update director email
+        updated_directors = directors_data.copy()
+        updated_directors[director_index]['email'] = email
+        
+        # Update the document in Supabase
+        update_result = supabase.table('documents').update({
+            'extracted_directors': updated_directors
+        }).eq('id', document['id']).execute()
+        
+        if update_result.data:
+            return jsonify({
+                'success': True,
+                'message': 'Director email updated successfully',
+                'director_name': updated_directors[director_index].get('name', 'Unknown'),
+                'email': email
+            })
+        else:
+            return jsonify({'error': 'Failed to update director email'}), 500
+        
+    except Exception as e:
+        print(f"Update director email error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

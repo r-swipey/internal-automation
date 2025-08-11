@@ -430,6 +430,57 @@
             box-shadow: 0 0 10px rgba(255, 167, 38, 0.2);
         }
         
+        .email-input-section {
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(39, 216, 178, 0.1);
+            border-radius: 8px;
+            border: 1px dashed #27d8b2;
+        }
+        
+        .email-input {
+            width: 100%;
+            max-width: 300px;
+            padding: 8px 12px;
+            border: 2px solid #27d8b2;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Quicksand', sans-serif;
+            margin-bottom: 10px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+        
+        .email-input:focus {
+            border-color: #1fc4a0;
+            box-shadow: 0 0 8px rgba(39, 216, 178, 0.2);
+        }
+        
+        .save-email-btn {
+            background: linear-gradient(135deg, #27d8b2 0%, #8ce4d1 100%);
+            color: #FFFFFF;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            font-family: 'Quicksand', sans-serif;
+            transition: all 0.3s ease;
+            margin-left: 5px;
+        }
+        
+        .save-email-btn:hover {
+            background: linear-gradient(135deg, #1fc4a0 0%, #7dd9c6 100%);
+            transform: translateY(-1px);
+        }
+        
+        .save-email-btn:disabled {
+            background: linear-gradient(135deg, #778c98 0%, #b4b4b4 100%);
+            cursor: not-allowed;
+            transform: none;
+        }
+        
         /* Mobile Responsive */
         @media (max-width: 600px) {
             .container {
@@ -657,6 +708,11 @@
                     }
                     if (director.email) {
                         html += `Email: ${director.email}<br>`;
+                    } else {
+                        html += `<div class="email-input-section">`;
+                        html += `<input type="email" class="email-input" id="email_${index}" placeholder="Enter director email" required>`;
+                        html += `<button type="button" class="save-email-btn" onclick="saveDirectorEmail(${index})">Save Email</button>`;
+                        html += `</div>`;
                     }
                     if (director.nationality) {
                         html += `Nationality: ${director.nationality}<br>`;
@@ -721,8 +777,77 @@
             }
         }
         
+        function saveDirectorEmail(directorIndex) {
+            const emailInput = document.getElementById(`email_${directorIndex}`);
+            const email = emailInput.value.trim();
+            const saveBtn = emailInput.nextElementSibling;
+            
+            if (!email) {
+                alert('Please enter a valid email address.');
+                emailInput.focus();
+                return;
+            }
+            
+            // Basic email validation
+            if (!email.includes('@') || !email.includes('.')) {
+                alert('Please enter a valid email format.');
+                emailInput.focus();
+                return;
+            }
+            
+            // Show loading state
+            const originalBtnText = saveBtn.textContent;
+            saveBtn.textContent = '⏳ Saving...';
+            saveBtn.disabled = true;
+            
+            // Send email update to backend
+            fetch(`/update-director-email/${customerToken}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    directorIndex: directorIndex,
+                    email: email
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Replace email input with saved email display
+                    const emailSection = emailInput.parentElement;
+                    emailSection.innerHTML = `Email: ${email}<br>`;
+                    emailSection.classList.remove('email-input-section');
+                    emailSection.style.background = 'none';
+                    emailSection.style.border = 'none';
+                    emailSection.style.padding = '0';
+                    
+                    alert(`✅ Email saved for ${data.director_name || 'director'}`);
+                } else {
+                    alert(`❌ Error: ${data.error}`);
+                    // Reset button on error
+                    saveBtn.textContent = originalBtnText;
+                    saveBtn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('❌ Failed to save email. Please try again.');
+                // Reset button on error
+                saveBtn.textContent = originalBtnText;
+                saveBtn.disabled = false;
+            });
+        }
+        
         function requestApproval() {
             console.log('requestApproval() called');
+            
+            // Check if any directors are missing emails
+            const emailInputs = document.querySelectorAll('.email-input');
+            if (emailInputs.length > 0) {
+                alert('Please provide email addresses for all directors before requesting approval.');
+                return;
+            }
             
             // Get selected director (if multiple)
             const selectedDirector = document.querySelector('input[name="selectedDirector"]:checked');

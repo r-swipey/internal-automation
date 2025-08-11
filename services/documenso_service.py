@@ -34,9 +34,6 @@ class DocumensoService:
             
             if response.status_code == 200:
                 template_data = response.json()
-                print(f"[DEBUG] Template {template_id} structure:")
-                print(f"[DEBUG] Recipients: {template_data.get('recipients', [])}")
-                print(f"[DEBUG] Field: {template_data.get('Field', [])}")
                 
                 # Map field labels to field IDs - handle None fieldMeta
                 label_to_field = {}
@@ -89,10 +86,6 @@ class DocumensoService:
         REGISTRATION_NUMBER_FIELD_ID = 1454719
         RECIPIENT_ID = 373233
         
-        print(f"[DEBUG] Using fixed template {template_id} with known field IDs:")
-        print(f"[DEBUG] Company_Name fields: {COMPANY_NAME_FIELD_IDS}")
-        print(f"[DEBUG] Registration_Number field: {REGISTRATION_NUMBER_FIELD_ID}")
-        print(f"[DEBUG] Recipient ID: {RECIPIENT_ID}")
         try:
             if not self.api_key:
                 print("Warning: Documenso API key not configured")
@@ -101,15 +94,6 @@ class DocumensoService:
             if not directors_data or len(directors_data) == 0:
                 print("Warning: No directors data available for signature request")
                 return {'success': False, 'error': 'No directors data'}
-            
-            # Approved test emails only
-            approved_emails = {
-                'kalyanamo@gmail.com',
-                'hi@swipey.co',
-                'admin@swipey.co',
-                'mohan@swipey.co',
-                'engineering@swipey.co'
-            }
             
             # Prepare recipients from directors data using template recipient IDs
             recipients = []
@@ -121,18 +105,10 @@ class DocumensoService:
                     print(f"Warning: No email for director {director_name}, skipping")
                     continue
                 
-                # For testing: only send to approved emails, otherwise use test email
-                if director_email.lower() in approved_emails:
-                    test_email = director_email
-                    print(f"[APPROVED] Using approved test email: {test_email}")
-                else:
-                    test_email = 'kalyanamo@gmail.com'  # Default test email
-                    print(f"[REDIRECT] Redirecting {director_email} to test email: {test_email}")
-                
                 recipients.append({
                     'id': RECIPIENT_ID,  # Use hardcoded recipient ID
                     'name': director_name,
-                    'email': test_email,
+                    'email': director_email,
                     'signingOrder': 1
                 })
             
@@ -172,11 +148,6 @@ class DocumensoService:
                 )
             }
             
-            # Debug logging for prefill data
-            print(f"[DEBUG] Documenso prefill data being sent:")
-            print(f"[DEBUG] Company_Name: '{company_name}'")
-            print(f"[DEBUG] Registration_Number: '{registration_number or ''}'")
-            print(f"[DEBUG] Full prefillFields: {payload['prefillFields']}")
             
             # If document content is provided, include it
             if document_content:
@@ -197,8 +168,6 @@ class DocumensoService:
             print(f"Using template endpoint: {url}")
             response = requests.post(url, headers=self.headers, json=payload, timeout=30)
             
-            print(f"[DEBUG] Documenso API response status: {response.status_code}")
-            print(f"[DEBUG] Documenso API response: {response.text[:500]}...")
             
             if response.status_code in [200, 201]:
                 response_data = response.json()
@@ -284,9 +253,17 @@ class DocumensoService:
                 return {'success': False, 'error': 'No document ID'}
             
             print(f"Processing Documenso webhook: {event_type} for document {document_id}")
+            print(f"[DEBUG] External ID (ClickUp Task): {external_id}")
+            print(f"[DEBUG] Payload keys: {list(payload_data.keys())}")
             
             # Use external_id from Documenso payload (this is the ClickUp task ID)
             clickup_task_id = external_id
+            
+            # Critical check: If no external_id, we can't update ClickUp
+            if not clickup_task_id:
+                print(f"[ERROR] No externalId in webhook payload for event {event_type}")
+                print(f"[ERROR] Cannot update ClickUp without task ID - webhook payload: {payload_data}")
+                return {'success': False, 'error': 'No ClickUp task ID (externalId) in webhook payload'}
             # Try to get company name from multiple possible sources in webhook
             company_name = 'Unknown Company'
             if 'formValues' in payload_data:
@@ -321,6 +298,13 @@ class DocumensoService:
             }
             
             mapped_status = status_mapping.get(event_type, event_type)
+            
+            # Debug event mapping
+            if event_type in status_mapping:
+                print(f"[DEBUG] Mapped event '{event_type}' -> status '{mapped_status}'")
+            else:
+                print(f"[WARNING] Unknown Documenso event type: '{event_type}' - using as-is: '{mapped_status}'")
+                print(f"[DEBUG] Available mappings: {list(status_mapping.keys())}")
             
             # Update database with new status
             self._update_signature_request_status(document_id, mapped_status, webhook_data)
@@ -511,7 +495,7 @@ class DocumensoService:
             
             result = update_clickup_task_status(
                 task_id=clickup_task_id,
-                status_type='signature_status',
+                status_type='consent_status',
                 status_value=status,
                 additional_info={
                     'message': message,
