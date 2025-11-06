@@ -56,10 +56,15 @@ except Exception as e:
 # Supabase Configuration
 try:
     supabase_url = os.getenv('SUPABASE_URL')
-    supabase_key = os.getenv('SUPABASE_ANON_KEY')
+    # Use SERVICE_ROLE_KEY for backend operations to bypass RLS
+    supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY')
     if supabase_url and supabase_key and 'your_' not in supabase_url:
         supabase = create_client(supabase_url, supabase_key)
         print("Supabase client created successfully!")
+        if os.getenv('SUPABASE_SERVICE_ROLE_KEY'):
+            print("Using SERVICE_ROLE_KEY (bypasses RLS)")
+        else:
+            print("Warning: Using ANON_KEY (subject to RLS policies)")
     else:
         supabase = None
 except Exception as e:
