@@ -7,11 +7,13 @@ import os
 import requests
 import json
 from datetime import datetime
+import time
+from requests.exceptions import Timeout, RequestException
 
 
 class ClickUpService:
     """ClickUp API service for task updates"""
-    
+
     def __init__(self, api_token=None):
         self.api_token = api_token or os.getenv('CLICKUP_API_TOKEN')
         self.base_url = "https://api.clickup.com/api/v2"
@@ -19,6 +21,52 @@ class ClickUpService:
             'Authorization': self.api_token,
             'Content-Type': 'application/json'
         }
+        self.default_timeout = 15  # Reduced from 30 to 15 seconds
+        self.max_retries = 2  # Retry failed requests twice
+
+    def _make_request_with_retry(self, method, url, **kwargs):
+        """Make HTTP request with retry logic and timeout handling"""
+        # Set default timeout if not provided
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = self.default_timeout
+
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                if method == 'GET':
+                    response = requests.get(url, **kwargs)
+                elif method == 'POST':
+                    response = requests.post(url, **kwargs)
+                elif method == 'PUT':
+                    response = requests.put(url, **kwargs)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+
+                return response
+
+            except Timeout as e:
+                last_exception = e
+                if attempt < self.max_retries:
+                    wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s
+                    print(f"[WARNING] Request timeout (attempt {attempt + 1}/{self.max_retries + 1}). Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"[ERROR] Request failed after {self.max_retries + 1} attempts due to timeout")
+                    raise
+
+            except RequestException as e:
+                last_exception = e
+                if attempt < self.max_retries:
+                    wait_time = (attempt + 1) * 2
+                    print(f"[WARNING] Request error (attempt {attempt + 1}/{self.max_retries + 1}): {str(e)}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"[ERROR] Request failed after {self.max_retries + 1} attempts: {str(e)}")
+                    raise
+
+        # This should never be reached, but just in case
+        if last_exception:
+            raise last_exception
     
     def update_task_status(self, task_id, status_type, status_value, additional_info=None):
         """
@@ -190,9 +238,9 @@ class ClickUpService:
                 'comment_text': comment_text,
                 'notify_all': False  # Don't spam entire team
             }
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=30)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 print(f"[OK] Successfully added comment to ClickUp task {task_id}")
                 return {'success': True, 'comment_id': response.json().get('id')}
@@ -200,7 +248,11 @@ class ClickUpService:
                 error_msg = f"ClickUp API error: {response.status_code} - {response.text}"
                 print(f"[ERROR] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            error_msg = f"Timeout adding comment to task {task_id}"
+            print(f"[ERROR] {error_msg}")
+            return {'success': False, 'error': error_msg}
         except Exception as e:
             error_msg = f"Failed to add comment: {str(e)}"
             print(f"[ERROR] {error_msg}")
@@ -251,16 +303,19 @@ class ClickUpService:
             payload = {
                 'value': field_value
             }
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 print(f"[OK] Updated ClickUp custom field '{field_name}' to '{status_value}'")
                 return {'success': True}
             else:
                 print(f"[WARNING] Custom field update failed: {response.status_code} - {response.text}")
                 return {'success': False, 'error': response.text}
-                
+
+        except Timeout:
+            print(f"Custom field update timeout (non-critical): field '{field_name}'")
+            return {'success': False, 'error': 'Timeout'}
         except Exception as e:
             print(f"Custom field update failed (non-critical): {e}")
             return {'success': False, 'error': str(e)}
@@ -344,8 +399,8 @@ class ClickUpService:
         """Get task with custom fields information"""
         try:
             url = f"{self.base_url}/task/{task_id}?include_subtasks=false"
-            response = requests.get(url, headers=self.headers, timeout=10)
-            
+            response = self._make_request_with_retry('GET', url, headers=self.headers)
+
             if response.status_code == 200:
                 task_data = response.json()
                 return {
@@ -354,7 +409,9 @@ class ClickUpService:
                 }
             else:
                 return {'success': False, 'error': f"HTTP {response.status_code}"}
-                
+
+        except Timeout:
+            return {'success': False, 'error': 'Timeout getting task info'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
@@ -397,14 +454,14 @@ class ClickUpService:
                 files = {
                     'attachment': (filename, file, 'application/pdf')
                 }
-                
+
                 # Use different headers for file upload (no Content-Type)
                 headers = {
                     'Authorization': self.api_token
                 }
-                
-                response = requests.post(url, headers=headers, files=files, timeout=60)
-            
+
+                response = self._make_request_with_retry('POST', url, headers=headers, files=files, timeout=60)
+
             if response.status_code == 200:
                 response_data = response.json()
                 attachment_url = response_data.get('url', '')
@@ -419,7 +476,11 @@ class ClickUpService:
                 error_msg = f"File upload failed: {response.status_code} - {response.text}"
                 print(f"[ERROR] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            error_msg = f"File upload timeout for {filename}"
+            print(f"[ERROR] {error_msg}")
+            return {'success': False, 'error': error_msg}
         except Exception as e:
             error_msg = f"Failed to upload file: {str(e)}"
             print(f"[ERROR] {error_msg}")
@@ -473,9 +534,9 @@ class ClickUpService:
             }
             
             print(f"DEBUG: SSM field update payload: {payload}")
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 print(f"[OK] Updated SSM document field with attachment: {filename}")
                 return {'success': True}
@@ -483,7 +544,10 @@ class ClickUpService:
                 error_msg = f"SSM field update failed: {response.status_code} - {response.text}"
                 print(f"[WARNING] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            print(f"SSM field update timeout (non-critical)")
+            return {'success': False, 'error': 'Timeout'}
         except Exception as e:
             print(f"SSM field update failed (non-critical): {e}")
             return {'success': False, 'error': str(e)}
@@ -533,9 +597,9 @@ class ClickUpService:
             }
             
             print(f"Updating SSM Doc [upload] field with URL: {attachment_url}")
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 try:
                     print(f"[OK] Updated SSM Doc field with document URL: {filename}")
@@ -546,7 +610,10 @@ class ClickUpService:
                 error_msg = f"SSM Doc URL field update failed: {response.status_code} - {response.text}"
                 print(f"[WARNING] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            print(f"SSM Doc URL field update timeout (non-critical)")
+            return {'success': False, 'error': 'Timeout'}
         except Exception as e:
             print(f"SSM Doc URL field update failed (non-critical): {e}")
             return {'success': False, 'error': str(e)}
@@ -593,9 +660,9 @@ class ClickUpService:
             }
             
             print(f"Updating Signed Consent Form field with URL: {attachment_url}")
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 try:
                     print(f"[OK] Updated Signed Consent Form field with signed document: {filename}")
@@ -606,7 +673,10 @@ class ClickUpService:
                 error_msg = f"Signed Consent Form field update failed: {response.status_code} - {response.text}"
                 print(f"[WARNING] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            print(f"Signed Consent Form field update timeout (non-critical)")
+            return {'success': False, 'error': 'Timeout'}
         except Exception as e:
             print(f"Signed Consent Form field update failed (non-critical): {e}")
             return {'success': False, 'error': str(e)}
@@ -677,9 +747,9 @@ class ClickUpService:
         try:
             url = f"{self.base_url}/task/{task_id}/field/{field_id}"
             payload = {'value': value}
-            
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-            
+
+            response = self._make_request_with_retry('POST', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 print(f"[OK] Updated {field_name} field: {value}")
                 return {'success': True}
@@ -687,7 +757,11 @@ class ClickUpService:
                 error_msg = f"{field_name} field update failed: {response.status_code} - {response.text}"
                 print(f"[WARNING] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            error_msg = f"{field_name} field update timeout"
+            print(f"[WARNING] {error_msg}")
+            return {'success': False, 'error': error_msg}
         except Exception as e:
             print(f"{field_name} field update failed: {e}")
             return {'success': False, 'error': str(e)}
@@ -696,8 +770,8 @@ class ClickUpService:
         """Get basic task information"""
         try:
             url = f"{self.base_url}/task/{task_id}"
-            response = requests.get(url, headers=self.headers, timeout=10)
-            
+            response = self._make_request_with_retry('GET', url, headers=self.headers)
+
             if response.status_code == 200:
                 task_data = response.json()
                 return {
@@ -712,7 +786,9 @@ class ClickUpService:
                 }
             else:
                 return {'success': False, 'error': f"Task not found: {response.status_code}"}
-                
+
+        except Timeout:
+            return {'success': False, 'error': 'Timeout getting task info'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
@@ -766,9 +842,9 @@ class ClickUpService:
             payload = {
                 'description': new_description
             }
-            
-            response = requests.put(url, headers=self.headers, json=payload, timeout=15)
-            
+
+            response = self._make_request_with_retry('PUT', url, headers=self.headers, json=payload)
+
             if response.status_code == 200:
                 print(f"[OK] Updated task description with OCR data for task {task_id}")
                 return {'success': True}
@@ -776,7 +852,11 @@ class ClickUpService:
                 error_msg = f"Task description update failed: {response.status_code} - {response.text}"
                 print(f"[WARNING] {error_msg}")
                 return {'success': False, 'error': error_msg}
-                
+
+        except Timeout:
+            error_msg = f"Timeout updating task description for {task_id}"
+            print(f"[WARNING] {error_msg}")
+            return {'success': False, 'error': error_msg}
         except Exception as e:
             print(f"Task description update failed: {e}")
             return {'success': False, 'error': str(e)}
@@ -1068,7 +1148,7 @@ def attach_signed_document_content_to_task(task_id, file_content, filename, comm
                     'comment_text': comment,
                     'notify_all': False
                 }
-                requests.post(comment_url, headers=headers, json=comment_payload, timeout=10)
+                service._make_request_with_retry('POST', comment_url, headers=headers, json=comment_payload)
             except Exception as e:
                 print(f"Warning: Could not add comment: {e}")
         
