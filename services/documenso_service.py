@@ -233,28 +233,33 @@ class DocumensoService:
     def handle_signature_webhook(self, webhook_data: Dict) -> Dict:
         """
         Handle Documenso webhook events for signature status updates
-        
+
         Args:
             webhook_data (dict): Webhook payload from Documenso
-            
+
         Returns:
             dict: Result of webhook processing
         """
+        import time
+        webhook_start_time = time.time()
+        print(f"[TIMING] Webhook handler started at {time.strftime('%H:%M:%S')}")
+
         try:
             event_type = webhook_data.get('event')
             payload_data = webhook_data.get('payload', {})
-            
+
             # Documenso uses payload.id for document ID according to official docs
             document_id = payload_data.get('id')
             external_id = payload_data.get('externalId')  # This is our ClickUp task ID
-            
+
             if not document_id:
                 print("Warning: No document ID found in webhook payload")
                 return {'success': False, 'error': 'No document ID'}
-            
+
             print(f"Processing Documenso webhook: {event_type} for document {document_id}")
             print(f"[DEBUG] External ID (ClickUp Task): {external_id}")
             print(f"[DEBUG] Payload keys: {list(payload_data.keys())}")
+            print(f"[TIMING] Initial processing took {time.time() - webhook_start_time:.2f}s")
             
             # Use external_id from Documenso payload (this is the ClickUp task ID)
             clickup_task_id = external_id
@@ -321,8 +326,10 @@ class DocumensoService:
                 print(f"[DEBUG] Available mappings: {list(status_mapping.keys())}")
             
             # Update database with new status
+            db_start = time.time()
             self._update_signature_request_status(document_id, mapped_status, webhook_data)
-            
+            print(f"[TIMING] Database update took {time.time() - db_start:.2f}s")
+
             # Update ClickUp with signature status
             additional_info = {
                 'document_id': document_id,
@@ -330,19 +337,28 @@ class DocumensoService:
                 'event_type': event_type,
                 'webhook_data': webhook_data
             }
-            
+
+            clickup_start = time.time()
+            print(f"[TIMING] Starting ClickUp signature status update...")
             self._update_clickup_signature_status(clickup_task_id, mapped_status, additional_info)
-            
+            print(f"[TIMING] ClickUp signature status update took {time.time() - clickup_start:.2f}s")
+
             # Update Consent & Authorisation custom field for relevant Documenso states
             if mapped_status in ['sent', 'opened', 'completed', 'declined']:
                 print(f"Updating Consent & Authorisation field to: {mapped_status}")
+                consent_start = time.time()
                 self._update_consent_field(clickup_task_id, mapped_status, additional_info)
-            
+                print(f"[TIMING] Consent field update took {time.time() - consent_start:.2f}s")
+
             # Download and attach signed document to ClickUp when completed
             if mapped_status == 'completed':
                 print(f"Document completed! Downloading signed document {document_id}...")
+                download_start = time.time()
                 self._download_and_attach_signed_document(document_id, clickup_task_id, company_name)
-            
+                print(f"[TIMING] Download and attach took {time.time() - download_start:.2f}s")
+
+            total_time = time.time() - webhook_start_time
+            print(f"[TIMING] *** TOTAL WEBHOOK PROCESSING TIME: {total_time:.2f}s ***")
             print(f"[OK] Webhook processed: {event_type} -> {mapped_status} for task {clickup_task_id}")
             
             return {

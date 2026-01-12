@@ -23,19 +23,24 @@ class ClickUpService:
     def update_task_status(self, task_id, status_type, status_value, additional_info=None):
         """
         Update task with OCR or KYB status information
-        
+
         Args:
             task_id (str): ClickUp task ID
             status_type (str): 'ocr_status' or 'kyb_status'
             status_value (str): Status value (e.g., 'completed', 'failed', 'documents_pending_review')
             additional_info (dict): Optional additional information to include
         """
+        import time
+        method_start = time.time()
+        print(f"[TIMING] update_task_status() called for task {task_id}, type: {status_type}, value: {status_value}")
+
         try:
             if not self.api_token:
                 print("Warning: ClickUp API token not configured")
                 return {'success': False, 'error': 'No API token'}
-            
+
             # Create status comment based on type
+            comment_create_start = time.time()
             if status_type == 'ocr_status':
                 comment_text = self._create_ocr_status_comment(status_value, additional_info)
             elif status_type == 'kyb_status':
@@ -46,22 +51,31 @@ class ClickUpService:
                 comment_text = self._create_consent_status_comment(status_value, additional_info)
             else:
                 comment_text = f"**{status_type.upper()}**: {status_value}"
-            
+            print(f"[TIMING] Comment creation took {time.time() - comment_create_start:.2f}s")
+
             # Add comment to task
+            comment_add_start = time.time()
             result = self._add_comment_to_task(task_id, comment_text)
-            
+            print(f"[TIMING] _add_comment_to_task() took {time.time() - comment_add_start:.2f}s")
+
             # Update task custom fields if available
+            custom_field_start = time.time()
             self._update_custom_fields(task_id, status_type, status_value)
+            print(f"[TIMING] _update_custom_fields() took {time.time() - custom_field_start:.2f}s")
             
             # ALSO update task description with extracted data if OCR completed
             if status_type == 'ocr_status' and status_value == 'completed' and additional_info and additional_info.get('extracted_data'):
                 print(f"[INFO] Updating task description with OCR data...")
+                description_start = time.time()
                 description_result = self.update_task_description_with_ocr_data(task_id, additional_info['extracted_data'])
+                print(f"[TIMING] update_task_description_with_ocr_data() took {time.time() - description_start:.2f}s")
                 if description_result.get('success'):
                     print(f"[OK] Task description updated with extracted company information")
                 else:
                     print(f"[WARNING] Task description update failed: {description_result.get('error')}")
-            
+
+            total_method_time = time.time() - method_start
+            print(f"[TIMING] *** update_task_status() TOTAL TIME: {total_method_time:.2f}s ***")
             return result
             
         except Exception as e:
@@ -184,14 +198,18 @@ class ClickUpService:
     
     def _add_comment_to_task(self, task_id, comment_text):
         """Add comment to ClickUp task"""
+        import time
         try:
             url = f"{self.base_url}/task/{task_id}/comment"
             payload = {
                 'comment_text': comment_text,
                 'notify_all': False  # Don't spam entire team
             }
-            
+
+            print(f"[TIMING] Making POST request to ClickUp API: {url}")
+            api_call_start = time.time()
             response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+            print(f"[TIMING] ClickUp API POST /comment took {time.time() - api_call_start:.2f}s")
             
             if response.status_code == 200:
                 print(f"[OK] Successfully added comment to ClickUp task {task_id}")
@@ -208,9 +226,12 @@ class ClickUpService:
     
     def _update_custom_fields(self, task_id, status_type, status_value):
         """Update custom fields for OCR and KYB status"""
+        import time
         try:
             # Get task to find custom field IDs
+            get_task_start = time.time()
             task_info = self._get_task_with_custom_fields(task_id)
+            print(f"[TIMING] _get_task_with_custom_fields() took {time.time() - get_task_start:.2f}s")
             if not task_info.get('success'):
                 print(f"Could not get task info for custom fields: {task_info.get('error')}")
                 return
@@ -251,8 +272,11 @@ class ClickUpService:
             payload = {
                 'value': field_value
             }
-            
+
+            print(f"[TIMING] Making POST request to update custom field: {url}")
+            field_update_start = time.time()
             response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+            print(f"[TIMING] ClickUp API POST /field took {time.time() - field_update_start:.2f}s")
             
             if response.status_code == 200:
                 print(f"[OK] Updated ClickUp custom field '{field_name}' to '{status_value}'")
@@ -342,9 +366,13 @@ class ClickUpService:
     
     def _get_task_with_custom_fields(self, task_id):
         """Get task with custom fields information"""
+        import time
         try:
             url = f"{self.base_url}/task/{task_id}?include_subtasks=false"
+            print(f"[TIMING] Making GET request to ClickUp API: {url}")
+            api_call_start = time.time()
             response = requests.get(url, headers=self.headers, timeout=10)
+            print(f"[TIMING] ClickUp API GET /task took {time.time() - api_call_start:.2f}s")
             
             if response.status_code == 200:
                 task_data = response.json()
