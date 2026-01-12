@@ -1548,36 +1548,33 @@ def upload_file_with_conversion(token):
         import time
         time.sleep(2)
         
-        # Process with ASYNC OCR (NEW METHOD)
-        print(f"Starting ASYNC OCR processing on converted PDF...")
-        try:
-            ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'], supabase)
-            ocr_success = ocr_result.get('success', False)
-            extracted_data = ocr_result.get('extracted_data', {})
-            print(f"ASYNC OCR completed. Success: {ocr_success}")
-        except Exception as ocr_error:
-            print(f"ASYNC OCR processing failed: {ocr_error}")
-            ocr_success = False
-            extracted_data = {}
+        # Start ASYNC OCR processing in background thread (NON-BLOCKING)
+        print(f"Starting ASYNC OCR processing in background thread...")
 
+        def run_ocr_in_background():
+            """Background thread for OCR processing"""
+            try:
+                ocr_result = process_document_ocr_async(s3_result['key'], db_result['id'])
+                print(f"[BACKGROUND] ASYNC OCR completed. Success: {ocr_result.get('success', False)}")
+            except Exception as ocr_error:
+                print(f"[BACKGROUND] ASYNC OCR processing failed: {ocr_error}")
+
+        # Start background thread
+        ocr_thread = threading.Thread(target=run_ocr_in_background)
+        ocr_thread.daemon = True  # Thread will not prevent app from exiting
+        ocr_thread.start()
+        print(f"OCR thread started - returning response immediately")
+
+        # Return success response immediately without waiting for OCR
         return jsonify({
             'success': True,
-            'message': 'Document uploaded, converted, and processed successfully',
+            'message': 'Document uploaded successfully. OCR processing started in background.',
             'documentId': db_result['id'],
             'filename': file_info['filename'],
             'uploadedAt': db_result['upload_timestamp'],
-            'ocr_status': 'completed' if ocr_success else 'failed',
+            'ocr_status': 'processing',
             'conversion_info': conversion_info,
-            'extracted_preview': {
-                'company_name': extracted_data.get('company_name'),
-                'registration_number': extracted_data.get('registration_number'),
-                'incorporation_date': extracted_data.get('incorporation_date'),
-                'company_type': extracted_data.get('company_type'),
-                'business_address': extracted_data.get('business_address'),
-                'business_phone': extracted_data.get('business_phone'),
-                'directors': extracted_data.get('directors', []),
-                'document_type': extracted_data.get('document_type', 'unknown')
-            },
+            'note': 'OCR processing is running in the background. Check back shortly for extracted data.',
             'debug_info': {
                 's3_key': s3_result['key'],
                 'original_size': file_size,
@@ -2495,24 +2492,33 @@ def documenso_webhook_route():
         print(f"Full webhook payload: {webhook_data}")
         print(f"=== END WEBHOOK DEBUG ===")
         
-        # Process webhook with Documenso service
+        # Process webhook with Documenso service in BACKGROUND THREAD
         from services.documenso_service import handle_documenso_webhook
-        
-        result = handle_documenso_webhook(webhook_data)
-        
-        if result.get('success'):
-            return jsonify({
-                'success': True,
-                'message': 'Webhook processed successfully',
-                'event_type': result.get('event_type'),
-                'status': result.get('mapped_status')
-            })
-        else:
-            print(f"Webhook processing failed: {result.get('error')}")
-            return jsonify({
-                'success': False,
-                'error': result.get('error', 'Webhook processing failed')
-            }), 500
+
+        def process_webhook_in_background():
+            """Process Documenso webhook in background to avoid timeout"""
+            try:
+                result = handle_documenso_webhook(webhook_data)
+                if result.get('success'):
+                    print(f"[BACKGROUND] Webhook processed successfully: {result.get('event_type')}")
+                else:
+                    print(f"[BACKGROUND] Webhook processing failed: {result.get('error')}")
+            except Exception as bg_error:
+                print(f"[BACKGROUND] Webhook processing exception: {bg_error}")
+
+        # Start background thread
+        webhook_thread = threading.Thread(target=process_webhook_in_background)
+        webhook_thread.daemon = True
+        webhook_thread.start()
+        print(f"Webhook processing started in background - returning 200 immediately")
+
+        # Return success immediately to prevent timeout
+        return jsonify({
+            'success': True,
+            'message': 'Webhook received and is being processed',
+            'event_type': webhook_data.get('event'),
+            'note': 'Processing in background to prevent timeout'
+        }), 200
             
     except Exception as e:
         print(f"=== DOCUMENSO WEBHOOK EXCEPTION ===")
