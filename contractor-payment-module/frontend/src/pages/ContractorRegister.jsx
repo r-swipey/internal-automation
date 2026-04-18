@@ -25,7 +25,12 @@ export default function ContractorRegister() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [proxyDetected, setProxyDetected] = useState(false)
+  const [manualAccountNumber, setManualAccountNumber] = useState('')
+  const [manualPayeeName, setManualPayeeName] = useState('')
+  const [partialQr, setPartialQr] = useState(null)
   const fileRef = useRef()
+  const manualFormRef = useRef()
 
   useEffect(() => {
     contractorsAPI.getByToken(token)
@@ -49,16 +54,54 @@ export default function ContractorRegister() {
   async function handleFile(file) {
     if (!file) return
     setError('')
+    setProxyDetected(false)
+    setPartialQr(null)
+    setManualAccountNumber('')
+    setManualPayeeName('')
     setLoading(true)
     setQrIsExisting(false)
     try {
       const res = await contractorsAPI.parseQR(token, file)
+      if (res.data.is_proxy_id) {
+        setPartialQr(res.data)
+        setManualPayeeName(res.data.payee_name || '')
+        setProxyDetected(true)
+        setTimeout(() => manualFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+        return
+      }
       setQrResult(res.data)
-      // Save QR data to contractor record
       await contractorsAPI.saveQR(token, res.data)
       setStep(1)
     } catch (err) {
       setError(err.response?.data?.detail || 'Could not read QR code. Please try a clearer image.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleManualSubmit(e) {
+    e.preventDefault()
+    if (!manualAccountNumber.match(/^\d+$/)) {
+      setError('Account number must be digits only.')
+      return
+    }
+    setError('')
+    setLoading(true)
+    try {
+      const qrData = {
+        acquirer_id: partialQr.acquirer_id,
+        account_number: manualAccountNumber,
+        bank_name: partialQr.bank_name,
+        payee_name: manualPayeeName,
+        is_duitnow: true,
+        is_proxy_id: false,
+      }
+      await contractorsAPI.saveQR(token, qrData)
+      setQrResult(qrData)
+      setProxyDetected(false)
+      setStep(1)
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Could not save payment details. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -139,7 +182,7 @@ export default function ContractorRegister() {
           <div className="stack">
             <div>
               <h2 style={{ fontSize: 17, fontWeight: 600 }}>Hi, {contractor.name}</h2>
-              <p className="text-muted text-sm" style={{ marginTop: 4 }}>Upload your DuitNow QR code to register your payment details.</p>
+              <p className="text-muted text-sm" style={{ marginTop: 4 }}>Upload your QR code to save your payment details.</p>
             </div>
 
             <div
@@ -150,13 +193,66 @@ export default function ContractorRegister() {
               onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]) }}
             >
               <input ref={fileRef} type="file" accept="image/*" onChange={e => handleFile(e.target.files[0])} />
-              <div style={{ fontSize: 32, marginBottom: 10 }}>📷</div>
-              <div style={{ fontWeight: 500 }}>Tap to upload QR image</div>
-              <div className="text-muted text-sm" style={{ marginTop: 4 }}>PNG, JPG or screenshot</div>
+              {proxyDetected ? (
+                <>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🔄</div>
+                  <div style={{ fontWeight: 600, color: '#2563eb' }}>Retry with another QR</div>
+                  <div className="text-sm" style={{ marginTop: 4, color: '#93c5fd' }}>PNG, JPG or screenshot</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 32, marginBottom: 10 }}>📷</div>
+                  <div style={{ fontWeight: 500 }}>Tap here to upload your QR</div>
+                  <div className="text-muted text-sm" style={{ marginTop: 4 }}>PNG, JPG or screenshot</div>
+                </>
+              )}
             </div>
 
             {loading && <div className="text-center"><span className="spinner" /></div>}
-            {error && <div className="alert alert-error">{error}</div>}
+            {error && !proxyDetected && <div className="alert alert-error">{error}</div>}
+
+            {proxyDetected && partialQr && (
+              <div ref={manualFormRef} className="stack" style={{ gap: 12 }}>
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#92400e' }}>
+                  ⚠ <strong>We cannot read your account number from this QR.</strong> Please type your account number below.
+                </div>
+
+                <form onSubmit={handleManualSubmit} className="stack" style={{ gap: 10 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="label">Bank</label>
+                    <input className="input" type="text" value={partialQr.bank_name} readOnly style={{ background: '#f9fafb', color: '#6b7280' }} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="label">Your name</label>
+                    <input
+                      className="input"
+                      type="text"
+                      value={manualPayeeName}
+                      onChange={e => setManualPayeeName(e.target.value)}
+                      placeholder="Name on your bank account"
+                      required
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="label">Bank account number</label>
+                    <input
+                      className="input"
+                      type="text"
+                      inputMode="numeric"
+                      value={manualAccountNumber}
+                      onChange={e => setManualAccountNumber(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Numbers only, e.g. 1234567890"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                  {error && <div className="alert alert-error">{error}</div>}
+                  <button type="submit" className="btn btn-primary" style={{ justifyContent: 'center' }} disabled={loading}>
+                    {loading ? <span className="spinner" /> : 'Save and Continue →'}
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         )}
 
@@ -212,20 +308,18 @@ export default function ContractorRegister() {
           <form onSubmit={handleConfirm} className="stack">
             <div>
               <h2 style={{ fontSize: 17, fontWeight: 600 }}>Confirm Identity</h2>
-              <p className="text-muted text-sm" style={{ marginTop: 4 }}>Enter your IC number to complete registration.</p>
+              <p className="text-muted text-sm" style={{ marginTop: 4 }}>Enter your IC or passport number to complete registration.</p>
             </div>
 
             <div className="form-group">
-              <label className="label">IC Number</label>
+              <label className="label">IC / Passport Number</label>
               <input
                 className="input"
                 type="text"
-                placeholder="e.g. 901231-14-1234"
+                placeholder="e.g. 901231-14-1234 or A12345678"
                 value={icNumber}
                 onChange={e => setIcNumber(e.target.value)}
                 required
-                pattern="\d{6}-\d{2}-\d{4}|\d{12}"
-                title="Format: 901231-14-1234 or 12 digits"
               />
             </div>
 

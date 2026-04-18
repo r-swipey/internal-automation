@@ -75,7 +75,7 @@ async def submit_timesheet(token: str, body: TimesheetSubmitDays):
     if not c_result.data:
         raise HTTPException(status_code=404, detail="Invalid token")
     contractor = c_result.data[0]
-    if contractor["status"] != "active":
+    if contractor["status"] not in ("active", "paid"):
         raise HTTPException(status_code=403, detail="Contractor registration not complete")
     if not body.days:
         raise HTTPException(status_code=400, detail="No days provided")
@@ -96,26 +96,9 @@ async def submit_timesheet(token: str, body: TimesheetSubmitDays):
 
     latest_ts = existing_ts_list[0] if existing_ts_list else None
 
-    if latest_ts is None:
-        # First submission for this month
-        ts_result = db.table("timesheets").insert({
-            "contractor_id": contractor["id"],
-            "contractor_name": contractor["name"],
-            "outlet": primary_outlet,
-            "hourly_rate": contractor["hourly_rate"],
-            "year": body.year,
-            "month": body.month,
-            "sequence": 1,
-            "week1_hours": 0, "week2_hours": 0, "week3_hours": 0, "week4_hours": 0,
-            "amount": 0,
-            "status": "submitted",
-            "sync_status": "pending",
-            "submitted_at": now,
-        }).execute()
-        active_ts = ts_result.data[0]
-    elif latest_ts["status"] == "approved":
-        # Previous batch was approved — start a new record so admin sees new work
-        next_seq = (latest_ts.get("sequence") or 1) + 1
+    if latest_ts is None or latest_ts["status"] in ("approved", "rejected"):
+        # First submission, or previous was approved/rejected — start a fresh record
+        next_seq = (latest_ts.get("sequence") or 0) + 1 if latest_ts else 1
         ts_result = db.table("timesheets").insert({
             "contractor_id": contractor["id"],
             "contractor_name": contractor["name"],
@@ -132,7 +115,7 @@ async def submit_timesheet(token: str, body: TimesheetSubmitDays):
         }).execute()
         active_ts = ts_result.data[0]
     else:
-        # Existing submitted/rejected record — add new days to it
+        # Existing submitted record — add new days to it
         active_ts = latest_ts
 
     # ── Step 2: Process each submitted day ────────────────────────────────────
@@ -221,63 +204,70 @@ async def payment_history(token: str):
 
 @router.get("/submission-history/{token}", response_model=list[SubmissionBatchOut])
 async def submission_history(token: str):
-    """Per-submission history for the contractor view. Groups day logs by submission_id."""
+    """Contractor payment history. One entry per timesheet (approval unit) — matches admin view."""
     db = get_db()
     c_result = db.table("contractors").select("id").eq("registration_token", token).execute()
     if not c_result.data:
         raise HTTPException(status_code=404, detail="Invalid token")
     contractor_id = c_result.data[0]["id"]
 
-    # Fetch all submitted/resubmitted log events for this contractor
-    logs = db.table("timesheet_day_logs").select("*") \
+    timesheets = db.table("timesheets") \
+        .select("id,year,month,sequence,status,sync_status,rejection_reason,amount,hourly_rate") \
+        .eq("contractor_id", contractor_id) \
+        .order("year", desc=True).order("month", desc=True).order("sequence", desc=True) \
+        .execute().data
+
+    if not timesheets:
+        return []
+
+    # Fetch all active days grouped by timesheet_id for counts + hours + outlets
+    all_days = db.table("timesheet_days").select("timesheet_id,hours,outlet,status") \
+        .eq("contractor_id", contractor_id) \
+        .neq("status", "rejected") \
+        .execute().data
+
+    days_by_ts: dict[str, list] = {}
+    for d in all_days:
+        ts_id = d.get("timesheet_id")
+        if ts_id:
+            days_by_ts.setdefault(ts_id, []).append(d)
+
+    # Earliest submitted log per timesheet = submitted_at
+    logs = db.table("timesheet_day_logs").select("timesheet_id,created_at") \
         .eq("contractor_id", contractor_id) \
         .in_("event", ["submitted", "resubmitted"]) \
         .order("created_at") \
         .execute().data
 
-    # Fetch all timesheets for this contractor — keyed by id for direct lookup
-    timesheets = db.table("timesheets").select("id,year,month,sequence,status,rejection_reason,amount,hourly_rate") \
-        .eq("contractor_id", contractor_id).execute().data
-    ts_by_id = {t["id"]: t for t in timesheets}
-    # Legacy fallback: single timesheet per month keyed by (year, month)
-    ts_by_period: dict[tuple, dict] = {}
-    for t in timesheets:
-        ts_by_period.setdefault((t["year"], t["month"]), t)
-
-    # Group by submission_id; fall back to a synthetic key for legacy rows without one
-    groups: dict[str, list] = {}
+    first_submitted_by_ts: dict[str, str] = {}
     for log in logs:
-        key = log.get("submission_id") or f"legacy-{log['year']}-{log['month']}"
-        groups.setdefault(key, []).append(log)
+        ts_id = log.get("timesheet_id")
+        if ts_id and ts_id not in first_submitted_by_ts:
+            first_submitted_by_ts[ts_id] = log["created_at"]
 
     batches = []
-    for key, entries in groups.items():
-        year = entries[0]["year"]
-        month = entries[0]["month"]
-        submitted_at = entries[0]["created_at"]
-        total_hours = sum(float(e["hours"] or 0) for e in entries)
-        outlets = list(dict.fromkeys(e["outlet"] for e in entries if e.get("outlet")))
-
-        # Prefer timesheet_id on the log entry (new data) over period-based lookup (legacy)
-        ts_id = entries[0].get("timesheet_id")
-        ts = ts_by_id.get(ts_id) if ts_id else ts_by_period.get((year, month), {})
+    for ts in timesheets:
+        ts_id = str(ts["id"])
+        days = days_by_ts.get(ts_id, [])
+        total_hours = sum(float(d["hours"] or 0) for d in days)
+        outlets = list(dict.fromkeys(d["outlet"] for d in days if d.get("outlet")))
+        submitted_at = first_submitted_by_ts.get(ts_id) or ts.get("created_at", "")
 
         batches.append(SubmissionBatchOut(
-            submission_id=key if not key.startswith("legacy-") else None,
-            month=month,
-            year=year,
+            submission_id=ts["id"],
+            month=ts["month"],
+            year=ts["year"],
+            sequence=ts.get("sequence", 1),
             submitted_at=submitted_at,
-            days_count=len(entries),
+            days_count=len(days),
             total_hours=total_hours,
             outlets=outlets,
-            timesheet_status=ts.get("status", "submitted") if ts else "submitted",
-            rejection_reason=ts.get("rejection_reason") if ts and ts.get("status") == "rejected" else None,
-            # Use stored amount — already reflects any admin custom-rate overrides
-            amount=float(ts["amount"]) if ts and ts.get("amount") is not None else None,
+            timesheet_status=ts["status"],
+            sync_status=ts.get("sync_status"),
+            rejection_reason=ts.get("rejection_reason") if ts["status"] == "rejected" else None,
+            amount=float(ts["amount"]) if ts.get("amount") is not None else None,
         ))
 
-    # Sort newest first
-    batches.sort(key=lambda b: b.submitted_at, reverse=True)
     return batches
 
 
@@ -327,26 +317,46 @@ async def get_day_logs(timesheet_id: str, user=Depends(require_manager)):
 
 
 @router.patch("/days/{day_id}", response_model=DayCurrentStateOut)
-async def update_day_rate(day_id: str, body: DayRateUpdate, user=Depends(require_admin)):
-    """Admin-only: set a custom hourly rate for a specific day. Recalculates timesheet amount."""
+async def update_day(day_id: str, body: DayRateUpdate, user=Depends(require_manager)):
+    """Manager: update hourly rate and/or hours for a specific day. Recalculates timesheet amount."""
+    if body.hourly_rate is None and body.hours is None:
+        raise HTTPException(status_code=400, detail="Provide hourly_rate or hours to update")
+
     db = get_db()
     day_result = db.table("timesheet_days").select("*").eq("id", day_id).execute()
     if not day_result.data:
         raise HTTPException(status_code=404, detail="Day entry not found")
     day = day_result.data[0]
 
-    # Update the day's rate
-    updated = db.table("timesheet_days").update({
-        "hourly_rate": body.hourly_rate,
-        "updated_at": _utc_now_iso(),
-    }).eq("id", day_id).execute()
+    day_updates: dict = {"updated_at": _utc_now_iso()}
+    if body.hourly_rate is not None:
+        day_updates["hourly_rate"] = body.hourly_rate
+    if body.hours is not None:
+        if body.hours <= 0:
+            raise HTTPException(status_code=400, detail="hours must be greater than 0")
+        day_updates["hours"] = body.hours
+
+    updated = db.table("timesheet_days").update(day_updates).eq("id", day_id).execute()
+
+    # Write audit log if hours were changed
+    if body.hours is not None:
+        db.table("timesheet_day_logs").insert({
+            "contractor_id": day["contractor_id"],
+            "year": day["year"],
+            "month": day["month"],
+            "day": day["day"],
+            "event": "admin_hours_edit",
+            "hours": body.hours,
+            "outlet": day.get("outlet"),
+            "actor_id": user["sub"],
+            "timesheet_id": day.get("timesheet_id"),
+        }).execute()
 
     # Recalculate amount for the specific timesheet this day belongs to
     ts_id = day.get("timesheet_id")
     if ts_id:
         ts_result = db.table("timesheets").select("*").eq("id", ts_id).execute()
     else:
-        # Legacy rows without timesheet_id — fall back to single-timesheet-per-month assumption
         ts_result = db.table("timesheets").select("*") \
             .eq("contractor_id", day["contractor_id"]) \
             .eq("year", day["year"]).eq("month", day["month"]) \
@@ -354,7 +364,6 @@ async def update_day_rate(day_id: str, body: DayRateUpdate, user=Depends(require
 
     if ts_result.data:
         ts = ts_result.data[0]
-        # Only aggregate days belonging to this specific timesheet
         if ts_id:
             all_days = db.table("timesheet_days").select("*") \
                 .eq("timesheet_id", ts_id) \
@@ -366,14 +375,36 @@ async def update_day_rate(day_id: str, body: DayRateUpdate, user=Depends(require
                 .eq("year", day["year"]).eq("month", day["month"]) \
                 .neq("status", "rejected") \
                 .execute().data
+
+        # Use the freshly updated hours value for the edited day
+        updated_hours = body.hours
+        all_days_merged = []
+        for d in all_days:
+            if d["id"] == day_id and updated_hours is not None:
+                all_days_merged.append({**d, "hours": updated_hours})
+            else:
+                all_days_merged.append(d)
+
         new_amount = round(sum(
             float(d["hours"]) * float(d["hourly_rate"] if d.get("hourly_rate") is not None else ts["hourly_rate"])
-            for d in all_days
+            for d in all_days_merged
         ), 2)
-        db.table("timesheets").update({
-            "amount": new_amount,
-            "updated_at": _utc_now_iso(),
-        }).eq("id", ts["id"]).execute()
+
+        # Also recalculate week buckets when hours change
+        if body.hours is not None:
+            week_hours = {"week1_hours": 0.0, "week2_hours": 0.0, "week3_hours": 0.0, "week4_hours": 0.0}
+            for d in all_days_merged:
+                week_hours[_day_to_week_key(d["day"])] += float(d["hours"])
+            db.table("timesheets").update({
+                **week_hours,
+                "amount": new_amount,
+                "updated_at": _utc_now_iso(),
+            }).eq("id", ts["id"]).execute()
+        else:
+            db.table("timesheets").update({
+                "amount": new_amount,
+                "updated_at": _utc_now_iso(),
+            }).eq("id", ts["id"]).execute()
 
     return updated.data[0]
 

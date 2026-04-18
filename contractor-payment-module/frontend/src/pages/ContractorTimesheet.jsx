@@ -52,15 +52,13 @@ export default function ContractorTimesheet() {
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
 
-  // Global default outlet — applies to every day that hasn't been individually overridden
+  // Outlet for this submission — all days in a submission share one outlet
   const [outlet, setOutlet] = useState('')
 
   // submittedDays: { [day]: { status, hours, outlet } }
   const [submittedDays, setSubmittedDays] = useState({})
   // dailyHours: hours for newly selected days { [day]: hours }
   const [dailyHours, setDailyHours] = useState({})
-  // dailyOutletOverrides: per-day outlet when different from the global default { [day]: outlet }
-  const [dailyOutletOverrides, setDailyOutletOverrides] = useState({})
 
   useEffect(() => {
     async function load() {
@@ -85,7 +83,6 @@ export default function ContractorTimesheet() {
   useEffect(() => {
     if (!contractor) return
     setDailyHours({})
-    setDailyOutletOverrides({})
     timesheetsAPI.getSubmittedDays(token, year, month)
       .then(res => {
         const map = {}
@@ -94,15 +91,6 @@ export default function ContractorTimesheet() {
       })
       .catch(() => setSubmittedDays({}))
   }, [contractor, token, year, month])
-
-  // The outlet that applies to a given day: explicit override > global default
-  function effectiveOutlet(day) {
-    return dailyOutletOverrides[day] ?? outlet
-  }
-
-  function setDayOutlet(day, value) {
-    setDailyOutletOverrides(prev => ({ ...prev, [day]: value }))
-  }
 
   const totalHours = Object.values(dailyHours).reduce((s, h) => s + h, 0)
   const estimatedPay = contractor ? (totalHours * parseFloat(contractor.hourly_rate || 0)).toFixed(2) : '0.00'
@@ -123,8 +111,6 @@ export default function ContractorTimesheet() {
       const next = { ...prev }
       if (next[day] !== undefined) {
         delete next[day]
-        // Also clear any outlet override so it doesn't linger
-        setDailyOutletOverrides(o => { const n = { ...o }; delete n[day]; return n })
       } else {
         next[day] = isDayRejected(day) ? (submittedDays[day]?.hours || 8) : 8
       }
@@ -149,7 +135,7 @@ export default function ContractorTimesheet() {
       const days = Object.entries(dailyHours).map(([day, hours]) => ({
         day: Number(day),
         hours,
-        outlet: effectiveOutlet(Number(day)),
+        outlet,
       }))
       await timesheetsAPI.submit(token, { year, month, outlet, days })
       const [hRes, dRes] = await Promise.all([
@@ -161,7 +147,6 @@ export default function ContractorTimesheet() {
       for (const d of dRes.data) map[d.day] = { status: d.status, hours: parseFloat(d.hours), outlet: d.outlet }
       setSubmittedDays(map)
       setDailyHours({})
-      setDailyOutletOverrides({})
       setSubmitted(true)
     } catch (err) {
       setError(err.response?.data?.detail || 'Submission failed. Please try again.')
@@ -233,11 +218,11 @@ export default function ContractorTimesheet() {
               </div>
             </div>
 
-            {/* Global default outlet — applies to any day not individually overridden */}
+            {/* Outlet for this submission — applies to all days */}
             <div className="form-group">
               <label className="label">
-                Default outlet
-                <span className="text-muted" style={{ fontWeight: 400, marginLeft: 4 }}>(applies to all days unless changed per day below)</span>
+                Outlet
+                <span className="text-muted" style={{ fontWeight: 400, marginLeft: 4 }}>(applies to all days in this submission)</span>
               </label>
               <select className="input" style={{ fontSize: 16 }} value={outlet} onChange={e => setOutlet(e.target.value)}>
                 {outletOptions.map(o => (
@@ -329,89 +314,56 @@ export default function ContractorTimesheet() {
               </div>
             </div>
 
-            {/* Per-day stepper + outlet selection */}
+            {/* Per-day hour stepper */}
             {sortedSelectedDays.length > 0 && (
               <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
                 <div style={{ padding: '10px 14px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: '#6b6b6b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Adjust hours &amp; outlet per day
+                    Adjust hours per day
                   </span>
                 </div>
-                {sortedSelectedDays.map((day, i) => {
-                  const isOverridden = dailyOutletOverrides[day] !== undefined && dailyOutletOverrides[day] !== outlet
-                  return (
-                    <div
-                      key={day}
-                      style={{
-                        padding: '12px 14px',
-                        borderBottom: i < sortedSelectedDays.length - 1 ? '1px solid #f0f0f0' : 'none',
-                      }}
-                    >
-                      {/* Row 1: day label + remove */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
-                          {getDayName(year, month, day)} {day}
-                          {isDayRejected(day) && (
-                            <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#d97706', textTransform: 'uppercase' }}>
-                              resubmit
-                            </span>
-                          )}
+                {sortedSelectedDays.map((day, i) => (
+                  <div
+                    key={day}
+                    style={{
+                      padding: '12px 14px',
+                      borderBottom: i < sortedSelectedDays.length - 1 ? '1px solid #f0f0f0' : 'none',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', flex: 1 }}>
+                      {getDayName(year, month, day)} {day}
+                      {isDayRejected(day) && (
+                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#d97706', textTransform: 'uppercase' }}>
+                          resubmit
                         </span>
-                        <button
-                          type="button"
-                          style={{ ...STEP_BTN, border: 'none', background: 'transparent', color: '#9ca3af', fontSize: 18, width: 32, height: 32 }}
-                          onClick={() => toggleDay(day)}
-                          aria-label={`Remove day ${day}`}
-                        >✕</button>
-                      </div>
-
-                      {/* Row 2: hours stepper + outlet picker */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <button
-                          type="button"
-                          style={{ ...STEP_BTN, opacity: dailyHours[day] <= 0.5 ? 0.35 : 1 }}
-                          onClick={() => stepHours(day, -0.5)}
-                          disabled={dailyHours[day] <= 0.5}
-                          aria-label={`Decrease hours for day ${day}`}
-                        >−</button>
-                        <span style={{ minWidth: 38, textAlign: 'center', fontWeight: 700, fontSize: 15, color: 'var(--color-text)', flexShrink: 0 }}>
-                          {dailyHours[day]}h
-                        </span>
-                        <button
-                          type="button"
-                          style={{ ...STEP_BTN, opacity: dailyHours[day] >= 24 ? 0.35 : 1 }}
-                          onClick={() => stepHours(day, 0.5)}
-                          disabled={dailyHours[day] >= 24}
-                          aria-label={`Increase hours for day ${day}`}
-                        >+</button>
-
-                        {/* Divider */}
-                        <div style={{ width: 1, height: 28, background: '#e2e8f0', flexShrink: 0 }} />
-
-                        {/* Outlet picker for this day — full width of remaining space */}
-                        <div style={{ flex: 1, position: 'relative' }}>
-                          <select
-                            value={effectiveOutlet(day)}
-                            onChange={e => setDayOutlet(day, e.target.value)}
-                            style={{
-                              width: '100%', fontSize: 13, fontWeight: isOverridden ? 600 : 400,
-                              padding: '8px 10px', borderRadius: 6,
-                              border: isOverridden ? '1px solid var(--color-primary)' : '1px solid #e2e8f0',
-                              background: isOverridden ? '#eff6ff' : '#f9fafb',
-                              color: isOverridden ? 'var(--color-primary)' : 'var(--color-text)',
-                              appearance: 'auto',
-                              touchAction: 'manipulation',
-                            }}
-                          >
-                            {outletOptions.map(o => (
-                              <option key={o} value={o}>{o}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      style={{ ...STEP_BTN, opacity: dailyHours[day] <= 0.5 ? 0.35 : 1 }}
+                      onClick={() => stepHours(day, -0.5)}
+                      disabled={dailyHours[day] <= 0.5}
+                      aria-label={`Decrease hours for day ${day}`}
+                    >−</button>
+                    <span style={{ minWidth: 38, textAlign: 'center', fontWeight: 700, fontSize: 15, color: 'var(--color-text)', flexShrink: 0 }}>
+                      {dailyHours[day]}h
+                    </span>
+                    <button
+                      type="button"
+                      style={{ ...STEP_BTN, opacity: dailyHours[day] >= 24 ? 0.35 : 1 }}
+                      onClick={() => stepHours(day, 0.5)}
+                      disabled={dailyHours[day] >= 24}
+                      aria-label={`Increase hours for day ${day}`}
+                    >+</button>
+                    <button
+                      type="button"
+                      style={{ ...STEP_BTN, border: 'none', background: 'transparent', color: '#9ca3af', fontSize: 18, width: 32, height: 32 }}
+                      onClick={() => toggleDay(day)}
+                      aria-label={`Remove day ${day}`}
+                    >✕</button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -466,13 +418,20 @@ export default function ContractorTimesheet() {
                   {/* Header row: period + status */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                     <div>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{MONTHS[s.month - 1]} {s.year}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 14 }}>{MONTHS[s.month - 1]} {s.year}</span>
+                        {s.sequence > 1 && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#2563eb', background: '#eff6ff', borderRadius: 4, padding: '1px 6px' }}>
+                            #{s.sequence}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: 11, color: '#6b6b6b', marginTop: 2 }}>
                         Submitted {dateLabel} · {timeLabel}
                       </div>
                     </div>
-                    <span className={`badge ${statusMap[s.timesheet_status] || 'badge-gray'}`}>
-                      {s.timesheet_status}
+                    <span className={`badge ${s.sync_status === 'synced' ? 'badge-blue' : (statusMap[s.timesheet_status] || 'badge-gray')}`}>
+                      {s.sync_status === 'synced' ? 'PAID' : s.timesheet_status.toUpperCase()}
                     </span>
                   </div>
 

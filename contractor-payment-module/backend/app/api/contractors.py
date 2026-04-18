@@ -100,6 +100,7 @@ async def parse_qr(token: str, file: UploadFile = File(...)):
         bank_name=parsed["bank_name"],
         payee_name=parsed["payee_name"],
         is_duitnow=parsed["is_duitnow"],
+        is_proxy_id=parsed.get("is_proxy_id", False),
     )
 
 
@@ -193,6 +194,7 @@ async def save_qr_data(token: str, qr: QRParseResult):
         "acquirer_id": qr.acquirer_id,
         "account_number": qr.account_number,
         "bank_name": qr.bank_name,
+        "payee_name": qr.payee_name or None,
     }).eq("registration_token", token).execute()
     return {"ok": True}
 

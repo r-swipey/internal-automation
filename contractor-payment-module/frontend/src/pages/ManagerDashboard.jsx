@@ -20,7 +20,7 @@ function canProcessTimesheet(timesheet) {
 
 // ── Add Contractor Modal ───────────────────────────────────────────────────────
 function AddContractorModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', phone: '', outlet: '', hourly_rate: '' })
+  const [form, setForm] = useState({ name: '', phone: '+601', outlet: '', hourly_rate: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -47,12 +47,25 @@ function AddContractorModal({ onClose, onCreated }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
         <form onSubmit={submit} className="stack">
-          {[['name', 'Full Name', 'text', 'e.g. Ahmad bin Salleh'], ['phone', 'Phone', 'tel', '+601x-xxx xxxx']].map(([key, label, type, ph]) => (
-            <div className="form-group" key={key}>
-              <label className="label">{label}</label>
-              <input className="input" type={type} placeholder={ph} required value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+          <div className="form-group">
+            <label className="label">Full Name</label>
+            <input className="input" type="text" placeholder="e.g. Ahmad bin Salleh" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="label">Phone</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+              <span style={{ padding: '0 10px', height: 38, lineHeight: '38px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRight: 'none', borderRadius: '6px 0 0 6px', fontSize: 14, color: '#374151', whiteSpace: 'nowrap' }}>+601</span>
+              <input
+                className="input"
+                type="tel"
+                placeholder="x-xxx xxxx"
+                required
+                value={form.phone.startsWith('+601') ? form.phone.slice(4) : form.phone}
+                onChange={e => setForm(f => ({ ...f, phone: '+601' + e.target.value }))}
+                style={{ borderRadius: '0 6px 6px 0', flex: 1 }}
+              />
             </div>
-          ))}
+          </div>
           <div className="form-group">
             <label className="label">Outlet</label>
             <select className="input" required value={form.outlet} onChange={e => setForm(f => ({ ...f, outlet: e.target.value }))}>
@@ -132,9 +145,10 @@ function ContractorDetailPanel({ contractor: c, onClose, onAction }) {
         <div>
           <div className="label" style={{ marginBottom: 6 }}>Payment details</div>
           {c.bank_name && c.account_number ? (
-            <div style={{ fontSize: 14 }}>
+            <div style={{ fontSize: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {c.payee_name && <span style={{ fontWeight: 700 }}>{c.payee_name}</span>}
               <span style={{ fontWeight: 600 }}>{c.bank_name}</span>
-              <span className="text-muted" style={{ marginLeft: 8 }}>···{c.account_number.slice(-4)}</span>
+              <span className="text-muted" style={{ fontFamily: 'monospace', fontSize: 13 }}>{c.account_number}</span>
             </div>
           ) : (
             <div className="text-muted text-sm">Not registered yet</div>
@@ -182,7 +196,7 @@ function ContractorDetailPanel({ contractor: c, onClose, onAction }) {
           {c.status === 'inactive' ? (
             <button className="btn btn-primary btn-sm" onClick={async () => {
               if (confirm('Re-activate this contractor?')) {
-                await contractorsAPI.update(c.id, { status: 'pending' })
+                await contractorsAPI.update(c.id, { status: 'active' })
                 onAction()
               }
             }}>
@@ -213,6 +227,7 @@ function ContractorsTab() {
   const [copiedTs, setCopiedTs] = useState(null)
   const [filterName, setFilterName] = useState('')
   const [filterOutlet, setFilterOutlet] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
   const [selectedContractor, setSelectedContractor] = useState(null)
 
   const load = useCallback(async () => {
@@ -230,8 +245,21 @@ function ContractorsTab() {
   const filtered = contractors.filter(c => {
     const matchName = !filterName || c.name.toLowerCase().includes(filterName.toLowerCase())
     const matchOutlet = !filterOutlet || c.outlet === filterOutlet
-    return matchName && matchOutlet
+    const matchStatus = !filterStatus || c.status === filterStatus
+    return matchName && matchOutlet && matchStatus
   })
+
+  // Duplicate detection — scan full list (not filtered) so off-screen duplicates are still flagged
+  const accountNumberCounts = {}
+  const payeeNameCounts = {}
+  contractors.forEach(c => {
+    if (c.account_number) accountNumberCounts[c.account_number] = (accountNumberCounts[c.account_number] || 0) + 1
+    if (c.payee_name) payeeNameCounts[c.payee_name] = (payeeNameCounts[c.payee_name] || 0) + 1
+  })
+  function isDuplicate(c) {
+    return (c.account_number && accountNumberCounts[c.account_number] > 1) ||
+           (c.payee_name && payeeNameCounts[c.payee_name] > 1)
+  }
 
   function copyLink(token) {
     const link = `${window.location.origin}/register/${token}`
@@ -266,8 +294,17 @@ function ContractorsTab() {
           <option value="">All outlets</option>
           {OUTLETS.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
-        {(filterName || filterOutlet) && (
-          <button className="btn btn-ghost btn-sm" onClick={() => { setFilterName(''); setFilterOutlet('') }}>Clear</button>
+        <select className="input" style={{ width: 140 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="pending_registration">Pending Reg.</option>
+          <option value="inactive">Inactive</option>
+          <option value="terminated">Terminated</option>
+
+        </select>
+        {(filterName || filterOutlet || filterStatus) && (
+          <button className="btn btn-ghost btn-sm" onClick={() => { setFilterName(''); setFilterOutlet(''); setFilterStatus('') }}>Clear</button>
         )}
       </div>
 
@@ -301,16 +338,25 @@ function ContractorsTab() {
                 <tr><td colSpan={7} className="text-center text-muted" style={{ padding: 32 }}>{contractors.length === 0 ? 'No contractors yet' : 'No contractors match the filters'}</td></tr>
               )}
               {filtered.map(c => (
-                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedContractor(c)}>
+                <tr key={c.id} style={{ cursor: 'pointer', background: isDuplicate(c) ? '#fffbeb' : undefined }} onClick={() => setSelectedContractor(c)}>
                   <td>
-                    <div style={{ fontWeight: 500 }}>{c.name}</div>
+                    <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {c.name}
+                      {isDuplicate(c) && (
+                        <span title="Duplicate account number or account name detected" style={{ color: '#d97706', fontSize: 13, fontWeight: 700, cursor: 'help' }}>⚠</span>
+                      )}
+                    </div>
                     <div className="text-muted text-sm">{c.phone}</div>
                   </td>
                   <td>{c.outlet}</td>
                   <td>{statusBadge(c.status)}</td>
                   <td>
                     {c.bank_name
-                      ? <><div style={{ fontWeight: 500 }}>{c.bank_name}</div><div className="text-muted text-sm">···{c.account_number?.slice(-4)}</div></>
+                      ? <>
+                          {c.payee_name && <div style={{ fontWeight: 600, fontSize: 13 }}>{c.payee_name}</div>}
+                          <div style={{ fontWeight: 500 }}>{c.bank_name}</div>
+                          <div className="text-muted text-sm" style={{ fontFamily: 'monospace' }}>{c.account_number}</div>
+                        </>
                       : <span className="text-muted text-sm">Not set</span>
                     }
                   </td>
@@ -336,7 +382,7 @@ function ContractorsTab() {
                   <td onClick={e => e.stopPropagation()}>
                     {c.status === 'inactive' ? (
                       <button className="btn btn-primary btn-sm"
-                        onClick={async () => { if (confirm('Re-activate this contractor?')) { await contractorsAPI.update(c.id, { status: 'pending' }); load() } }}>
+                        onClick={async () => { if (confirm('Re-activate this contractor?')) { await contractorsAPI.update(c.id, { status: 'active' }); load() } }}>
                         Re-activate
                       </button>
                     ) : (
@@ -370,6 +416,10 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
   const [editRate, setEditRate] = useState('')
   const [rateSaving, setRateSaving] = useState(false)
   const [rateError, setRateError] = useState('')
+  const [editingHoursDayId, setEditingHoursDayId] = useState(null)
+  const [editHours, setEditHours] = useState('')
+  const [hoursSaving, setHoursSaving] = useState(false)
+  const [hoursError, setHoursError] = useState('')
   const [showLog, setShowLog] = useState(false)
 
   function loadDays() {
@@ -405,6 +455,23 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
       setRateError(err.response?.data?.detail || 'Failed to save rate')
     } finally {
       setRateSaving(false)
+    }
+  }
+
+  async function saveHours(dayId) {
+    const val = parseFloat(editHours)
+    if (isNaN(val) || val <= 0) { setHoursError('Enter a valid hours > 0'); return }
+    setHoursSaving(true)
+    setHoursError('')
+    try {
+      await timesheetsAPI.updateDayHours(dayId, val)
+      setEditingHoursDayId(null)
+      loadDays()
+      onRefresh && onRefresh()
+    } catch (err) {
+      setHoursError(err.response?.data?.detail || 'Failed to save hours')
+    } finally {
+      setHoursSaving(false)
     }
   }
 
@@ -477,7 +544,7 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
             <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
               {/* Header */}
               <div style={{
-                display: 'grid', gridTemplateColumns: '52px 1fr 52px 1fr',
+                display: 'grid', gridTemplateColumns: '52px 1fr 90px 1fr',
                 padding: '6px 10px', background: '#f8fafc',
                 borderBottom: '1px solid #e5e7eb',
                 fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.3,
@@ -502,7 +569,7 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
                   }}>
                     {/* Main row */}
                     <div style={{
-                      display: 'grid', gridTemplateColumns: '52px 1fr 52px 1fr',
+                      display: 'grid', gridTemplateColumns: '52px 1fr 90px 1fr',
                       padding: '8px 10px', alignItems: 'center',
                     }}>
                       <span style={{ fontSize: 12 }}>
@@ -513,7 +580,45 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
                         {d.outlet}
                         {isRejected && <span style={{ marginLeft: 4, fontSize: 10, color: '#b91c1c', fontWeight: 600 }}>REJ</span>}
                       </span>
-                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>{parseFloat(d.hours).toFixed(1)}h</span>
+                      <div style={{ textAlign: 'right' }}>
+                        {editingHoursDayId !== d.id ? (
+                          <span
+                            style={{
+                              fontSize: 12, fontWeight: 600,
+                              cursor: isAdmin && !isRejected ? 'pointer' : 'default',
+                              borderBottom: isAdmin && !isRejected ? '1px dashed #bfdbfe' : 'none',
+                              paddingBottom: 1,
+                            }}
+                            onClick={() => { if (isAdmin && !isRejected) { setEditingHoursDayId(d.id); setEditHours(parseFloat(d.hours).toFixed(1)); setHoursError('') } }}
+                            title={isAdmin ? 'Click to edit hours' : ''}
+                          >
+                            {parseFloat(d.hours).toFixed(1)}h
+                          </span>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+                            <input
+                              type="number" min="0.5" step="0.5"
+                              value={editHours}
+                              onChange={e => setEditHours(e.target.value)}
+                              style={{ width: 56, fontSize: 12, padding: '3px 6px', border: '1px solid var(--color-primary)', borderRadius: 4, textAlign: 'right' }}
+                              autoFocus
+                              onKeyDown={e => { if (e.key === 'Enter') saveHours(d.id); if (e.key === 'Escape') setEditingHoursDayId(null) }}
+                            />
+                            <span style={{ fontSize: 12, color: '#6b7280' }}>h</span>
+                            <button
+                              onClick={() => saveHours(d.id)} disabled={hoursSaving}
+                              style={{ fontSize: 11, padding: '3px 7px', background: 'var(--color-primary)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                            >{hoursSaving ? '…' : '✓'}</button>
+                            <button
+                              onClick={() => setEditingHoursDayId(null)}
+                              style={{ fontSize: 11, padding: '3px 7px', background: '#f3f4f6', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                            >✕</button>
+                          </div>
+                        )}
+                        {editingHoursDayId === d.id && hoursError && (
+                          <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 2 }}>{hoursError}</div>
+                        )}
+                      </div>
                       <div style={{ textAlign: 'right' }}>
                         {!isEditing ? (
                           <span
@@ -639,8 +744,8 @@ function TimesheetDetailPanel({ timesheet: ts, months, onClose, onAction, onRefr
                           <div key={log.id} style={{ fontSize: 11, marginBottom: 4, lineHeight: 1.5 }}>
                             <span style={{
                               fontWeight: 600, textTransform: 'uppercase', marginRight: 6,
-                              color: log.event === 'rejected' ? '#b91c1c' : log.event === 'resubmitted' ? '#d97706' : '#16a34a',
-                            }}>{log.event}</span>
+                              color: log.event === 'rejected' ? '#b91c1c' : log.event === 'resubmitted' ? '#d97706' : log.event === 'admin_hours_edit' ? '#7c3aed' : '#16a34a',
+                            }}>{log.event === 'admin_hours_edit' ? 'edited (admin)' : log.event}</span>
                             {log.hours != null && <span style={{ marginRight: 6 }}>{parseFloat(log.hours).toFixed(1)}h</span>}
                             {log.outlet && <span className="text-muted" style={{ marginRight: 6 }}>{log.outlet}</span>}
                             {log.rejection_reason && <span className="text-muted" style={{ marginRight: 6 }}>"{log.rejection_reason}"</span>}
@@ -672,14 +777,18 @@ function TimesheetsTab() {
   const [filterYear, setFilterYear] = useState(now.getFullYear())
   const [filterStatus, setFilterStatus] = useState('')
   const [filterSyncStatus, setFilterSyncStatus] = useState('')
+  const [filterOutlet, setFilterOutlet] = useState('')
+  const [filterName, setFilterName] = useState('')
   const [selectedTs, setSelectedTs] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params = { month: filterMonth, year: filterYear }
+      const params = { year: filterYear }
+      if (filterMonth) params.month = filterMonth
       if (filterStatus) params.status = filterStatus
       if (filterSyncStatus) params.sync_status = filterSyncStatus
+      if (filterOutlet) params.outlet = filterOutlet
       const res = await timesheetsAPI.list(params)
       setTimesheets(res.data)
       setSelected(new Set())
@@ -691,9 +800,13 @@ function TimesheetsTab() {
     } finally {
       setLoading(false)
     }
-  }, [filterMonth, filterYear, filterStatus, filterSyncStatus])
+  }, [filterMonth, filterYear, filterStatus, filterSyncStatus, filterOutlet])
 
   useEffect(() => { load() }, [load])
+
+  const displayedTimesheets = filterName
+    ? timesheets.filter(t => t.contractor_name.toLowerCase().includes(filterName.toLowerCase()))
+    : timesheets
 
   function toggle(id) {
     setSelected(prev => {
@@ -704,7 +817,7 @@ function TimesheetsTab() {
   }
 
   function toggleAll() {
-    const eligible = timesheets.filter(canProcessTimesheet).map(t => t.id)
+    const eligible = displayedTimesheets.filter(canProcessTimesheet).map(t => t.id)
     if (eligible.every(id => selected.has(id))) {
       setSelected(new Set())
     } else {
@@ -737,34 +850,50 @@ function TimesheetsTab() {
 
   return (
     <div className="container" style={{ padding: '24px 16px' }}>
-      <div className="row-between" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+      <div className="row-between" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
         <h2 style={{ fontSize: 15, fontWeight: 600 }}>Timesheets</h2>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <select className="input" style={{ width: 'auto' }} value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
-            {months.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-          </select>
-          <select className="input" style={{ width: 'auto' }} value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
-            {[2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <select className="input" style={{ width: 'auto' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="submitted">Submitted</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          <select className="input" style={{ width: 'auto' }} value={filterSyncStatus} onChange={e => setFilterSyncStatus(e.target.value)}>
-            <option value="">All sync</option>
-            <option value="pending">Pending</option>
-            <option value="syncing">Syncing</option>
-            <option value="synced">Synced</option>
-            <option value="failed">Failed</option>
-          </select>
-          {selected.size > 0 && user?.role === 'admin' && (
-            <button className="btn btn-primary btn-sm" onClick={bulkApprove} disabled={approving}>
-              {approving ? <span className="spinner" /> : `Process ${selected.size} (RM ${totalSelected.toFixed(2)})`}
-            </button>
-          )}
-        </div>
+        {selected.size > 0 && user?.role === 'admin' && (
+          <button className="btn btn-primary btn-sm" onClick={bulkApprove} disabled={approving}>
+            {approving ? <span className="spinner" /> : `Process ${selected.size} (RM ${totalSelected.toFixed(2)})`}
+          </button>
+        )}
+      </div>
+      <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          style={{ width: 160 }}
+          type="text"
+          placeholder="Search name…"
+          value={filterName}
+          onChange={e => setFilterName(e.target.value)}
+        />
+        <select className="input" style={{ width: 'auto' }} value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
+          <option value={0}>All months</option>
+          {months.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+        </select>
+        <select className="input" style={{ width: 'auto' }} value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
+          {[2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select className="input" style={{ width: 'auto' }} value={filterOutlet} onChange={e => setFilterOutlet(e.target.value)}>
+          <option value="">All outlets</option>
+          {OUTLETS.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <select className="input" style={{ width: 'auto' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="submitted">Submitted</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <select className="input" style={{ width: 'auto' }} value={filterSyncStatus} onChange={e => setFilterSyncStatus(e.target.value)}>
+          <option value="">All sync</option>
+          <option value="pending">Pending</option>
+          <option value="syncing">Syncing</option>
+          <option value="synced">Synced</option>
+          <option value="failed">Failed</option>
+        </select>
+        {(filterName || filterOutlet || filterStatus || filterSyncStatus) && (
+          <button className="btn btn-ghost btn-sm" onClick={() => { setFilterName(''); setFilterOutlet(''); setFilterStatus(''); setFilterSyncStatus('') }}>Clear</button>
+        )}
       </div>
 
       {result && (
@@ -780,7 +909,7 @@ function TimesheetsTab() {
           <table>
             <thead>
               <tr>
-                <th><input type="checkbox" onChange={toggleAll} checked={timesheets.filter(canProcessTimesheet).every(t => selected.has(t.id)) && timesheets.some(canProcessTimesheet)} /></th>
+                <th><input type="checkbox" onChange={toggleAll} checked={displayedTimesheets.filter(canProcessTimesheet).every(t => selected.has(t.id)) && displayedTimesheets.some(canProcessTimesheet)} /></th>
                 <th>Contractor</th>
                 <th>Outlet</th>
                 <th>Period</th>
@@ -791,10 +920,10 @@ function TimesheetsTab() {
               </tr>
             </thead>
             <tbody>
-              {timesheets.length === 0 && (
-                <tr><td colSpan={8} className="text-center text-muted" style={{ padding: 32 }}>No timesheets for this period</td></tr>
+              {displayedTimesheets.length === 0 && (
+                <tr><td colSpan={8} className="text-center text-muted" style={{ padding: 32 }}>{timesheets.length === 0 ? 'No timesheets for this period' : 'No timesheets match the filters'}</td></tr>
               )}
-              {timesheets.map(t => (
+              {displayedTimesheets.map(t => (
                 <tr key={t.id} onClick={() => setSelectedTs(t)} style={{ cursor: 'pointer' }}>
                   <td onClick={e => e.stopPropagation()}>
                     <input

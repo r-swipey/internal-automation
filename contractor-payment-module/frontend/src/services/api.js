@@ -59,6 +59,7 @@ export const timesheetsAPI = {
   getDayLogs: (id) => api.get(`/timesheets/${id}/day-logs`),
   getDays: (id) => api.get(`/timesheets/${id}/days`),
   updateDayRate: (dayId, rate) => api.patch(`/timesheets/days/${dayId}`, { hourly_rate: rate }),
+  updateDayHours: (dayId, hours) => api.patch(`/timesheets/days/${dayId}`, { hours }),
   update: (id, data) => api.patch(`/timesheets/${id}`, data),
   approve: (id) => api.post(`/timesheets/${id}/approve`),
   reject: (id, reason) => api.post(`/timesheets/${id}/reject`, { rejection_reason: reason }),

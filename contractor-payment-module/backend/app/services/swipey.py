@@ -7,7 +7,8 @@ Header:   X-API-Key
 import asyncio
 import uuid
 import calendar
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 import httpx
 from app.core.config import settings
 import logging
@@ -20,11 +21,50 @@ RETRY_BASE_DELAY = 2  # seconds
 # Map DuitNow acquirer IDs (from QR) → Swipey's exact bank_name + swift_code
 # Source of truth: Swipey List of bank accounts_PROD.csv
 ACQUIRER_TO_SWIPEY_BANK = {
-    "890053": {"bank_name": "Touch and Go Digital", "swift_code": "TNGDMYNB"},
-    "588734": {"bank_name": "MAYBANK",              "swift_code": "MBBEMYKL"},
-    "501664": {"bank_name": "AFFIN BANK",           "swift_code": "PHBMMYKL"},
-    # Add more as new acquirer IDs are confirmed from real QR samples:
-    # "XXXXXX": {"bank_name": "PUBLIC BANK",       "swift_code": "PBBEMYKL"},
+    # Source: Swipey List of bank accounts_PROD.csv
+    "589373": {"bank_name": "AGRO BANK",                                        "swift_code": "AGOBMYKL"},
+    "501664": {"bank_name": "AFFIN BANK",                                       "swift_code": "PHBMMYKL"},
+    "432134": {"bank_name": "AL RAJHI BANK",                                    "swift_code": "RJHIMYKL"},
+    "504374": {"bank_name": "ALLIANCE BANK",                                    "swift_code": "MFBBMYKL"},
+    "564169": {"bank_name": "AMBANK",                                           "swift_code": "ARBKMYKL"},
+    "629188": {"bank_name": "BANK OF AMERICA MERRILL LYNCH",                    "swift_code": "BOFAMY2X"},
+    "629152": {"bank_name": "BANK OF CHINA",                                    "swift_code": "BKCHMYKL"},
+    "603346": {"bank_name": "BANK ISLAM",                                       "swift_code": "BIMBMYKL"},
+    "564167": {"bank_name": "BANK MUAMALAT",                                    "swift_code": "BMMBMYKL"},
+    "589267": {"bank_name": "BANK RAKYAT",                                      "swift_code": "BKRMMYKL"},
+    "420709": {"bank_name": "BANK SIMPANAN NASIONAL(BSN)",                      "swift_code": "BSNAMYK1"},
+    "629204": {"bank_name": "BNP PARIBAS",                                      "swift_code": "BNPAMYKL"},
+    "629261": {"bank_name": "CHINA CONSTRUCTION BANK (CCB)",                    "swift_code": "PCBCMYKL"},
+    "501854": {"bank_name": "CIMB",                                             "swift_code": "CIBBMYKL"},
+    "589170": {"bank_name": "CITIBANK",                                         "swift_code": "CITIMYKL"},
+    "629246": {"bank_name": "DEUTSCHE BANK",                                    "swift_code": "DEUTMYKL"},
+    "629279": {"bank_name": "GX BANK BERHAD",                                   "swift_code": "GXSPMYKL"},
+    "588830": {"bank_name": "HONG LEONG BANK",                                  "swift_code": "HLBBMYKL"},
+    "589836": {"bank_name": "HSBC",                                             "swift_code": "HBMBMYKL"},
+    "629253": {"bank_name": "INDUSTRIAL & COMMERCIAL BANK OF CHINA (ICBC)",     "swift_code": "ICBKMYKL"},
+    "629212": {"bank_name": "J.P. MORGAN",                                      "swift_code": "CHASMYKX"},
+    "639406": {"bank_name": "KUWAIT FINANCE HOUSE",                             "swift_code": "KFHOMYKL"},
+    "588734": {"bank_name": "MAYBANK",                                          "swift_code": "MBBEMYKL"},
+    "432310": {"bank_name": "MBSB BANK",                                        "swift_code": "AFBQMYKL"},
+    "629220": {"bank_name": "MIZUHO CORP BANK (MALAYSIA) BERHAD",               "swift_code": "MHCBMYKA"},
+    "629196": {"bank_name": "BANK OF TOKYO-MITSUBISHI UFJ(MALAYSIA) BERHAD",    "swift_code": "BOTKMY21"},
+    "504324": {"bank_name": "OCBC BANK",                                        "swift_code": "OCBCMYKL"},
+    "564162": {"bank_name": "PUBLIC BANK",                                      "swift_code": "PBBEMYKL"},
+    "564160": {"bank_name": "RHB BANK",                                         "swift_code": "RHBBMYKL"},
+    "539981": {"bank_name": "STANDARD CHARTERED",                               "swift_code": "SCBLMYKX"},
+    "629238": {"bank_name": "SUMITOMO MITSUI BANKING CORPORATION MALAYSIA BERHAD", "swift_code": "SMBCMYKL"},
+    "890053": {"bank_name": "Touch and Go Digital",                             "swift_code": "TNGDMYNB"},
+    "519469": {"bank_name": "UNITED OVERSEAS BANK (DIQUOB)",                    "swift_code": "UOVBMYKL"},
+    # E-wallets/digital banks below — must exist in Swipey DB before activating:
+    # "890111": {"bank_name": "MERCHANTRADE ASIA", "swift_code": ""},   # pending ClickUp task
+    # "629295": {"bank_name": "AEON BANK",         "swift_code": ""},   # pending ClickUp task
+    # "890012": {"bank_name": "BIGPAY",            "swift_code": ""},   # pending ClickUp task
+    # "629303": {"bank_name": "BOOST BANK",        "swift_code": ""},   # pending ClickUp task
+    # "890046": {"bank_name": "GPAY NETWORK",      "swift_code": ""},   # pending ClickUp task
+    # "890152": {"bank_name": "KIPLEPAY",          "swift_code": ""},   # pending ClickUp task
+    # "890087": {"bank_name": "RAZER PAY",         "swift_code": ""},   # pending ClickUp task
+    # "890004": {"bank_name": "SHOPEE PAY",        "swift_code": ""},   # pending ClickUp task
+    # "629287": {"bank_name": "YTL DIGITAL BANK",  "swift_code": ""},   # pending ClickUp task
 }
 
 
@@ -73,14 +113,17 @@ async def create_payment_record(
         raise RuntimeError("SWIPEY_COMPANY_UUID is not configured")
 
     # ── Dates ─────────────────────────────────────────────────────────────────
-    today = date.today()
+    myt = ZoneInfo("Asia/Kuala_Lumpur")
+    now_myt = datetime.now(myt)
+    # Swipey rejects same-day expected_payment_date after 18:00 MYT
+    payment_date = now_myt.date() if now_myt.hour < 18 else (now_myt + timedelta(days=1)).date()
     if year and month:
         last_day = calendar.monthrange(year, month)[1]
         due_date = date(year, month, last_day).isoformat()
     else:
-        last_day = calendar.monthrange(today.year, today.month)[1]
-        due_date = date(today.year, today.month, last_day).isoformat()
-    expected_date = today.isoformat()
+        last_day = calendar.monthrange(now_myt.year, now_myt.month)[1]
+        due_date = date(now_myt.year, now_myt.month, last_day).isoformat()
+    expected_date = payment_date.isoformat()
 
     # ── Bank mapping — acquirer ID → Swipey bank_name + swift_code ────────────
     bank_info = ACQUIRER_TO_SWIPEY_BANK.get(acquirer_id)
@@ -120,6 +163,7 @@ async def create_payment_record(
             logger.info(f"Swipey sync attempt {attempt} for invoice {invoice_number}")
             result = await _make_request(path, [bill])
             logger.info(f"Swipey sync success for invoice {invoice_number}")
+            logger.info(f"Swipey raw response for {invoice_number}: {result}")
             # API returns a list; grab first item
             if isinstance(result, list) and result:
                 return result[0]

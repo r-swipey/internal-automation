@@ -83,8 +83,8 @@ create table timesheets (
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
 
-  -- One timesheet per contractor per month
-  unique(contractor_id, year, month)
+  -- One timesheet per contractor per month per submission round
+  unique(contractor_id, year, month, sequence)
 );
 
 create index idx_timesheets_contractor on timesheets(contractor_id);
@@ -197,8 +197,21 @@ alter table timesheets add column if not exists sequence int not null default 1;
 alter table timesheet_days add column if not exists timesheet_id uuid references timesheets(id);
 alter table timesheet_day_logs add column if not exists timesheet_id uuid references timesheets(id);
 
+-- Migration: expand day log event types to include admin edits
+alter table timesheet_day_logs drop constraint if exists timesheet_day_logs_event_check;
+alter table timesheet_day_logs add constraint timesheet_day_logs_event_check
+  check (event in ('submitted', 'rejected', 'resubmitted', 'admin_hours_edit'));
+
+-- Migration: add 'paid' status for contractors after Swipey payment sync
+alter table contractors drop constraint if exists contractors_status_check;
+alter table contractors add constraint contractors_status_check
+  check (status in ('pending', 'active', 'inactive', 'terminated', 'paid'));
+
 -- Migration: store QR image path
 alter table contractors add column if not exists qr_image_path text;
+
+-- Migration: store account holder name from QR scan (payee_name / tag 59)
+alter table contractors add column if not exists payee_name text;
 
 -- Migration: add attempted_at to payments (missing from initial deploy)
 alter table payments add column if not exists attempted_at timestamptz;

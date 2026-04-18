@@ -76,6 +76,7 @@ class ContractorOut(BaseModel):
     acquirer_id: Optional[str] = None
     account_number: Optional[str] = None
     bank_name: Optional[str] = None
+    payee_name: Optional[str] = None
     ic_number: Optional[str] = None
     registration_token: UUID
     registered_at: Optional[datetime] = None
@@ -104,6 +105,7 @@ class QRParseResult(BaseModel):
     bank_name: str
     payee_name: str
     is_duitnow: bool
+    is_proxy_id: bool = False
 
 
 # ── Timesheets ─────────────────────────────────────────────────────────────────
@@ -181,7 +183,8 @@ class DayCurrentStateOut(BaseModel):
 
 
 class DayRateUpdate(BaseModel):
-    hourly_rate: float
+    hourly_rate: Optional[float] = None
+    hours: Optional[float] = None
 
 
 class DayLogOut(BaseModel):
@@ -230,11 +233,13 @@ class SubmissionBatchOut(BaseModel):
     submission_id: Optional[UUID] = None
     month: int
     year: int
+    sequence: int = 1
     submitted_at: datetime
     days_count: int
     total_hours: float
     outlets: list[str]
     timesheet_status: str
+    sync_status: Optional[str] = None
     rejection_reason: Optional[str] = None
     amount: Optional[float] = None
 
